@@ -129,4 +129,5 @@
 })(jQuery);
 
 // Base URL for AJAX
-window.BASE_URL = document.querySelector('meta[name="csrf-token"]')?.closest('head')?.querySelector('title')?.textContent?.includes('HEMS') ? '' : '';
+window.BASE_URL = window.BASE_URL || (document.querySelector('meta[name="csrf-token"]')?.closest('head')?.querySelector('title')?.textContent?.includes('HEMS') ? '' : '');
+

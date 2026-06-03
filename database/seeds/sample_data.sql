@@ -1,5 +1,6 @@
 -- HEMS Sample Data
-USE hems_db;
+-- Database handled by installer
+
 
 -- Roles
 INSERT INTO roles (name, slug, description, is_system) VALUES

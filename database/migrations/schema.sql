@@ -4,8 +4,8 @@
 SET FOREIGN_KEY_CHECKS = 0;
 SET SQL_MODE = 'STRICT_TRANS_TABLES';
 
-CREATE DATABASE IF NOT EXISTS hems_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE hems_db;
+-- Database creation and selection handled by installer
+
 
 -- ===================== CORE TABLES =====================
 

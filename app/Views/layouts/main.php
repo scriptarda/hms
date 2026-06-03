@@ -138,6 +138,7 @@ function hasPerm($slug, $perms) { return in_array($slug, $perms); }
 <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>window.BASE_URL = '<?= rtrim(View::url(""), "/") ?>';</script>
 <script src="<?= View::asset('js/app.js') ?>"></script>
 <?= View::section('scripts') ?>
 </body>
