@@ -3,319 +3,291 @@ namespace App\Controllers;
 
 use App\Helpers\BaseController;
 use App\Helpers\Session;
-use App\Helpers\CSRF;
-use App\Helpers\Validator;
 use App\Helpers\Database;
+use App\Services\AssetService;
 
 class AssetController extends BaseController
 {
     private Database $db;
+    private AssetService $service;
 
     public function __construct()
     {
         $this->db = Database::getInstance();
+        $this->service = new AssetService();
     }
 
     public function index(): void
     {
-        $status = $_GET['status'] ?? '';
-        $category = $_GET['category_id'] ?? '';
-        $dept = $_GET['department_id'] ?? '';
-        $search = $_GET['search'] ?? '';
-
-        $sql = "SELECT a.*, ac.name as category_name, d.name as department_name 
-                FROM assets a
-                LEFT JOIN asset_categories ac ON a.category_id = ac.id
-                LEFT JOIN departments d ON a.department_id = d.id
-                WHERE a.deleted_at IS NULL";
-        
-        $params = [];
-        if ($status) { $sql .= " AND a.status = ?"; $params[] = $status; }
-        if ($category) { $sql .= " AND a.category_id = ?"; $params[] = $category; }
-        if ($dept) { $sql .= " AND a.department_id = ?"; $params[] = $dept; }
-        if ($search) {
-            $sql .= " AND (a.name LIKE ? OR a.asset_tag LIKE ? OR a.serial_number LIKE ?)";
-            $params[] = "%{$search}%"; $params[] = "%{$search}%"; $params[] = "%{$search}%";
-        }
-
-        $sql .= " ORDER BY a.asset_tag ASC";
-        $assets = $this->db->fetchAll($sql, $params);
-
-        $categories = $this->db->fetchAll("SELECT * FROM asset_categories WHERE deleted_at IS NULL ORDER BY name");
-        $departments = $this->db->fetchAll("SELECT * FROM departments WHERE deleted_at IS NULL ORDER BY name");
+        $filters = $this->assetFilters();
+        $formData = $this->service->formData();
 
         $this->view('assets/index', [
             'pageTitle' => 'Asset Registry',
-            'assets' => $assets,
-            'categories' => $categories,
-            'departments' => $departments,
-            'filters' => ['status' => $status, 'category_id' => $category, 'department_id' => $dept, 'search' => $search]
+            'assets' => $this->service->registry($filters),
+            'metrics' => $this->service->metrics(),
+            'categories' => $formData['categories'],
+            'departments' => $formData['departments'],
+            'users' => $formData['users'],
+            'filters' => $filters,
         ]);
     }
 
     public function create(): void
     {
-        $categories = $this->db->fetchAll("SELECT * FROM asset_categories WHERE deleted_at IS NULL ORDER BY name");
-        $departments = $this->db->fetchAll("SELECT * FROM departments WHERE deleted_at IS NULL ORDER BY name");
-        $buildings = $this->db->fetchAll("SELECT * FROM buildings WHERE deleted_at IS NULL ORDER BY name");
-        
-        $this->view('assets/create', [
-            'pageTitle' => 'Register Asset',
-            'categories' => $categories,
-            'departments' => $departments,
-            'buildings' => $buildings
-        ]);
+        $data = $this->service->formData();
+        $data['pageTitle'] = 'Register Asset';
+        $data['floors'] = $this->floors();
+        $data['rooms'] = $this->rooms();
+
+        $this->view('assets/create', $data);
     }
 
     public function store(): void
     {
-        $v = new Validator($_POST);
-        $v->required('asset_tag')->required('name')->required('status');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
+        $result = $this->service->create($_POST, Session::userId());
+        if (!$result['success']) {
+            Session::flash('error', $result['message']);
             $this->redirect('/assets/create');
         }
 
-        // Verify asset tag uniqueness
-        $exists = $this->db->fetch("SELECT id FROM assets WHERE asset_tag = ? AND deleted_at IS NULL", [trim($_POST['asset_tag'])]);
-        if ($exists) {
-            Session::flash('error', 'Asset tag already registered.');
-            $this->redirect('/assets/create');
-        }
-
-        $data = [
-            'asset_tag' => trim($_POST['asset_tag']),
-            'name' => trim($_POST['name']),
-            'serial_number' => trim($_POST['serial_number'] ?? ''),
-            'category_id' => $_POST['category_id'] ?: null,
-            'manufacturer' => trim($_POST['manufacturer'] ?? ''),
-            'model' => trim($_POST['model'] ?? ''),
-            'department_id' => $_POST['department_id'] ?: null,
-            'building_id' => $_POST['building_id'] ?: null,
-            'floor_id' => $_POST['floor_id'] ?: null,
-            'room_id' => $_POST['room_id'] ?: null,
-            'status' => $_POST['status'] ?? 'active',
-            'purchase_date' => $_POST['purchase_date'] ?: null,
-            'purchase_cost' => $_POST['purchase_cost'] ?: null,
-            'warranty_expiry' => $_POST['warranty_expiry'] ?: null,
-            'notes' => trim($_POST['notes'] ?? ''),
-        ];
-
-        $id = $this->db->insert('assets', $data);
-
-        // Record history
-        $this->db->insert('asset_history', [
-            'asset_id' => $id,
-            'user_id' => Session::userId(),
-            'action' => 'registered',
-            'description' => 'Asset registered in system'
-        ]);
-
-        Session::flash('success', 'Asset registered successfully.');
-        $this->redirect('/assets/' . $id);
+        Session::flash('success', $result['message']);
+        $this->redirect('/assets/' . $result['id']);
     }
 
     public function show(string $id): void
     {
-        $asset = $this->db->fetch(
-            "SELECT a.*, ac.name as category_name, d.name as department_name, b.name as building_name
-             FROM assets a
-             LEFT JOIN asset_categories ac ON a.category_id = ac.id
-             LEFT JOIN departments d ON a.department_id = d.id
-             LEFT JOIN buildings b ON a.building_id = b.id
-             WHERE a.id = ? AND a.deleted_at IS NULL",
-            [(int)$id]
-        );
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
-        if (!$asset) $this->abort(404);
-
-        $assignments = $this->db->fetchAll(
-            "SELECT aa.*, CONCAT(u.first_name, ' ', u.last_name) as user_name, u.email as user_email
-             FROM asset_assignments aa
-             JOIN users u ON aa.user_id = u.id
-             WHERE aa.asset_id = ? ORDER BY aa.assigned_at DESC",
-            [(int)$id]
-        );
-
-        $history = $this->db->fetchAll(
-            "SELECT ah.*, CONCAT(u.first_name, ' ', u.last_name) as user_name
-             FROM asset_history ah
-             JOIN users u ON ah.user_id = u.id
-             WHERE ah.asset_id = ? ORDER BY ah.created_at DESC",
-            [(int)$id]
-        );
-
-        $tickets = $this->db->fetchAll(
-            "SELECT t.id, t.ticket_number, t.title, t.status, t.priority, t.created_at
-             FROM tickets t
-             WHERE t.asset_id = ? AND t.deleted_at IS NULL ORDER BY t.created_at DESC",
-            [(int)$id]
-        );
-
-        $maintenance = $this->db->fetchAll(
-            "SELECT m.*, CONCAT(u.first_name, ' ', u.last_name) as tech_name
-             FROM maintenance_tasks m
-             LEFT JOIN users u ON m.assigned_to = u.id
-             WHERE m.asset_id = ? AND m.deleted_at IS NULL ORDER BY m.scheduled_date DESC",
-            [(int)$id]
-        );
-
-        $users = $this->db->fetchAll("SELECT id, first_name, last_name FROM users WHERE status='active' AND deleted_at IS NULL ORDER BY first_name");
-
-        $this->view('assets/show', [
-            'pageTitle' => 'Asset: ' . $asset->asset_tag,
-            'asset' => $asset,
-            'assignments' => $assignments,
-            'history' => $history,
-            'tickets' => $tickets,
-            'maintenance' => $maintenance,
-            'users' => $users
-        ]);
+        $bundle['pageTitle'] = 'Asset: ' . $bundle['asset']->asset_tag;
+        $this->view('assets/show', $bundle);
     }
 
     public function edit(string $id): void
     {
-        $asset = $this->db->fetch("SELECT * FROM assets WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$asset) $this->abort(404);
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
-        $categories = $this->db->fetchAll("SELECT * FROM asset_categories WHERE deleted_at IS NULL ORDER BY name");
-        $departments = $this->db->fetchAll("SELECT * FROM departments WHERE deleted_at IS NULL ORDER BY name");
-        $buildings = $this->db->fetchAll("SELECT * FROM buildings WHERE deleted_at IS NULL ORDER BY name");
-
-        $this->view('assets/edit', [
-            'pageTitle' => 'Edit Asset ' . $asset->asset_tag,
-            'asset' => $asset,
-            'categories' => $categories,
-            'departments' => $departments,
-            'buildings' => $buildings
+        $data = array_merge($this->service->formData(), [
+            'pageTitle' => 'Edit Asset ' . $bundle['asset']->asset_tag,
+            'asset' => $bundle['asset'],
+            'activeAssignment' => $bundle['activeAssignment'],
+            'floors' => $this->floors(),
+            'rooms' => $this->rooms(),
         ]);
+
+        $this->view('assets/edit', $data);
     }
 
     public function update(string $id): void
     {
-        $asset = $this->db->fetch("SELECT * FROM assets WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$asset) $this->abort(404);
-
-        $v = new Validator($_POST);
-        $v->required('asset_tag')->required('name')->required('status');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
+        $result = $this->service->update((int)$id, $_POST, Session::userId());
+        if (!$result['success']) {
+            Session::flash('error', $result['message']);
             $this->redirect('/assets/' . $id . '/edit');
         }
 
-        // Verify asset tag uniqueness excluding self
-        $exists = $this->db->fetch("SELECT id FROM assets WHERE asset_tag = ? AND id != ? AND deleted_at IS NULL", [trim($_POST['asset_tag']), (int)$id]);
-        if ($exists) {
-            Session::flash('error', 'Asset tag already registered to another asset.');
-            $this->redirect('/assets/' . $id . '/edit');
-        }
-
-        $data = [
-            'asset_tag' => trim($_POST['asset_tag']),
-            'name' => trim($_POST['name']),
-            'serial_number' => trim($_POST['serial_number'] ?? ''),
-            'category_id' => $_POST['category_id'] ?: null,
-            'manufacturer' => trim($_POST['manufacturer'] ?? ''),
-            'model' => trim($_POST['model'] ?? ''),
-            'department_id' => $_POST['department_id'] ?: null,
-            'building_id' => $_POST['building_id'] ?: null,
-            'floor_id' => $_POST['floor_id'] ?: null,
-            'room_id' => $_POST['room_id'] ?: null,
-            'status' => $_POST['status'] ?? 'active',
-            'purchase_date' => $_POST['purchase_date'] ?: null,
-            'purchase_cost' => $_POST['purchase_cost'] ?: null,
-            'warranty_expiry' => $_POST['warranty_expiry'] ?: null,
-            'notes' => trim($_POST['notes'] ?? ''),
-        ];
-
-        $this->db->update('assets', $data, 'id = ?', [(int)$id]);
-
-        $this->db->insert('asset_history', [
-            'asset_id' => (int)$id,
-            'user_id' => Session::userId(),
-            'action' => 'updated',
-            'description' => 'Asset details updated'
-        ]);
-
-        Session::flash('success', 'Asset details updated.');
+        Session::flash('success', $result['message']);
         $this->redirect('/assets/' . $id);
+    }
+
+    public function delete(string $id): void
+    {
+        if (!$this->canManage()) {
+            $this->abort(403);
+        }
+
+        $result = $this->service->delete((int)$id, Session::userId());
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
+        $this->redirect('/assets');
     }
 
     public function assignAsset(string $id): void
     {
-        $asset = $this->db->fetch("SELECT * FROM assets WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$asset) $this->abort(404);
+        if (!$this->canManage()) {
+            $this->abort(403);
+        }
 
         $userId = (int)($_POST['user_id'] ?? 0);
-        $notes = trim($_POST['notes'] ?? '');
-
-        if (!$userId) {
+        if ($userId <= 0) {
             Session::flash('error', 'Please select a user to assign.');
             $this->redirect('/assets/' . $id);
         }
 
-        // Return current active assignments
-        $this->db->update('asset_assignments', [
-            'returned_at' => date('Y-m-d H:i:s')
-        ], 'asset_id = ? AND returned_at IS NULL', [(int)$id]);
+        $result = $this->service->assign((int)$id, $userId, Session::userId(), trim($_POST['notes'] ?? ''));
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
+        $this->redirect('/assets/' . $id);
+    }
 
-        // Insert new assignment
-        $this->db->insert('asset_assignments', [
-            'asset_id' => (int)$id,
-            'user_id' => $userId,
-            'assigned_by' => Session::userId(),
-            'notes' => $notes
-        ]);
+    public function returnAsset(string $id): void
+    {
+        if (!$this->canManage()) {
+            $this->abort(403);
+        }
 
-        $user = $this->db->fetch("SELECT first_name, last_name FROM users WHERE id = ?", [$userId]);
-
-        $this->db->insert('asset_history', [
-            'asset_id' => (int)$id,
-            'user_id' => Session::userId(),
-            'action' => 'assigned',
-            'description' => 'Asset assigned to ' . $user->first_name . ' ' . $user->last_name . '. Notes: ' . $notes
-        ]);
-
-        Session::flash('success', 'Asset assigned successfully.');
+        $result = $this->service->returnAssignment((int)$id, Session::userId(), trim($_POST['notes'] ?? ''));
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
         $this->redirect('/assets/' . $id);
     }
 
     public function generateQR(string $id): void
     {
-        $asset = $this->db->fetch("SELECT * FROM assets WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$asset) $this->abort(404);
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
         $this->view('assets/qr', [
-            'pageTitle' => 'Print Asset Label: ' . $asset->asset_tag,
-            'asset' => $asset,
-            'printOnly' => true
+            'pageTitle' => 'Print Asset Label: ' . $bundle['asset']->asset_tag,
+            'asset' => $bundle['asset'],
+            'printOnly' => true,
         ], null);
     }
 
     public function qrView(string $id): void
     {
-        $asset = $this->db->fetch(
-            "SELECT a.*, ac.name as category_name, d.name as department_name, b.name as building_name
-             FROM assets a
-             LEFT JOIN asset_categories ac ON a.category_id = ac.id
-             LEFT JOIN departments d ON a.department_id = d.id
-             LEFT JOIN buildings b ON a.building_id = b.id
-             WHERE a.id = ? AND a.deleted_at IS NULL",
-            [(int)$id]
-        );
-
-        if (!$asset) $this->abort(404);
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
         $this->view('assets/qr', [
-            'pageTitle' => 'Asset Scan: ' . $asset->asset_tag,
-            'asset' => $asset,
-            'printOnly' => false
+            'pageTitle' => 'Asset Scan: ' . $bundle['asset']->asset_tag,
+            'asset' => $bundle['asset'],
+            'printOnly' => false,
         ], null);
     }
 
     public function dataList(): void
     {
-        $assets = $this->db->fetchAll("SELECT id, name, asset_tag, serial_number, status FROM assets WHERE deleted_at IS NULL");
-        $this->json(['data' => $assets]);
+        $this->json(['data' => $this->service->registry($this->assetFilters())]);
+    }
+
+    public function apiShow(string $id): void
+    {
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->json(['error' => 'Asset not found.'], 404);
+        }
+
+        $this->json($bundle);
+    }
+
+    public function apiStore(): void
+    {
+        $result = $this->service->create($this->requestData(), Session::userId());
+        $this->json($result, $result['success'] ? 201 : 422);
+    }
+
+    public function apiUpdate(string $id): void
+    {
+        $result = $this->service->update((int)$id, $this->requestData(), Session::userId());
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    public function apiDelete(string $id): void
+    {
+        if (!$this->canManage()) {
+            $this->json(['success' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        $result = $this->service->delete((int)$id, Session::userId());
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    public function apiAssign(string $id): void
+    {
+        if (!$this->canManage()) {
+            $this->json(['success' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        $data = $this->requestData();
+        $result = $this->service->assign((int)$id, (int)($data['user_id'] ?? 0), Session::userId(), trim($data['notes'] ?? ''));
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    public function apiReturn(string $id): void
+    {
+        if (!$this->canManage()) {
+            $this->json(['success' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        $data = $this->requestData();
+        $result = $this->service->returnAssignment((int)$id, Session::userId(), trim($data['notes'] ?? ''));
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    public function apiHistory(string $id): void
+    {
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->json(['error' => 'Asset not found.'], 404);
+        }
+
+        $this->json([
+            'asset' => $bundle['asset'],
+            'assignments' => $bundle['assignments'],
+            'history' => $bundle['history'],
+            'tickets' => $bundle['tickets'],
+            'maintenance' => $bundle['maintenance'],
+        ]);
+    }
+
+    public function apiWarranty(): void
+    {
+        $days = max(1, min(365, (int)($_GET['days'] ?? 90)));
+        $this->json(['days' => $days, 'data' => $this->service->warrantyAlerts($days)]);
+    }
+
+    public function apiQR(string $id): void
+    {
+        $url = \App\Helpers\View::url('qr/asset/' . (int)$id);
+        $payload = $this->service->qrPayload((int)$id, $url);
+        if (!$payload) {
+            $this->json(['error' => 'Asset not found.'], 404);
+        }
+
+        $this->json($payload);
+    }
+
+    private function assetFilters(): array
+    {
+        return [
+            'status' => $_GET['status'] ?? '',
+            'category_id' => $_GET['category_id'] ?? '',
+            'department_id' => $_GET['department_id'] ?? '',
+            'assigned_user_id' => $_GET['assigned_user_id'] ?? '',
+            'warranty' => $_GET['warranty'] ?? '',
+            'search' => trim($_GET['search'] ?? ''),
+        ];
+    }
+
+    private function requestData(): array
+    {
+        $raw = file_get_contents('php://input');
+        $json = json_decode($raw, true);
+        return is_array($json) ? array_merge($_POST, $json) : $_POST;
+    }
+
+    private function floors(): array
+    {
+        return $this->db->fetchAll("SELECT id, building_id, name FROM floors WHERE deleted_at IS NULL");
+    }
+
+    private function rooms(): array
+    {
+        return $this->db->fetchAll("SELECT r.id, r.name, r.room_number, f.building_id, r.floor_id FROM rooms r JOIN floors f ON r.floor_id = f.id WHERE r.deleted_at IS NULL");
+    }
+
+    private function canManage(): bool
+    {
+        $role = Session::get('role', 'staff');
+        return in_array($role, ['manager', 'administrator', 'super_administrator', 'biomedical_engineer', 'technician'], true)
+            || in_array('assets.edit', Session::get('permissions', []), true);
     }
 }

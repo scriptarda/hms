@@ -509,6 +509,75 @@ CREATE TABLE service_request_approvals (
     FOREIGN KEY (approver_id) REFERENCES users(id)
 ) ENGINE=InnoDB;
 
+CREATE TABLE service_catalog_items (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    type VARCHAR(50) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    short_description VARCHAR(255),
+    description TEXT,
+    icon VARCHAR(50) DEFAULT 'bi-card-checklist',
+    color VARCHAR(20) DEFAULT '#1a56db',
+    category VARCHAR(50) DEFAULT 'General',
+    default_priority ENUM('critical','high','medium','low') DEFAULT 'medium',
+    approval_mode ENUM('department_head','manager','administrator','none') DEFAULT 'department_head',
+    fulfillment_category_id BIGINT UNSIGNED NULL,
+    sla_hours INT DEFAULT 48,
+    form_schema LONGTEXT NOT NULL,
+    is_active TINYINT(1) DEFAULT 1,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    FOREIGN KEY (fulfillment_category_id) REFERENCES ticket_categories(id) ON DELETE SET NULL,
+    INDEX idx_catalog_active (is_active, sort_order)
+) ENGINE=InnoDB;
+
+CREATE TABLE service_request_field_values (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_id BIGINT UNSIGNED NOT NULL,
+    field_key VARCHAR(100) NOT NULL,
+    field_label VARCHAR(150) NOT NULL,
+    field_type VARCHAR(30) DEFAULT 'text',
+    field_value TEXT,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_request_field (request_id, field_key),
+    INDEX idx_srfv_request (request_id),
+    FOREIGN KEY (request_id) REFERENCES service_requests(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE service_request_activity (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NULL,
+    action VARCHAR(60) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    metadata LONGTEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_sra_request (request_id, created_at),
+    FOREIGN KEY (request_id) REFERENCES service_requests(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE service_request_fulfillment_tasks (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_id BIGINT UNSIGNED NOT NULL UNIQUE,
+    ticket_id BIGINT UNSIGNED NULL,
+    assigned_to BIGINT UNSIGNED NULL,
+    status ENUM('queued','in_progress','completed','cancelled') DEFAULT 'queued',
+    summary VARCHAR(255),
+    notes TEXT,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_srft_status (status),
+    FOREIGN KEY (request_id) REFERENCES service_requests(id) ON DELETE CASCADE,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE SET NULL,
+    FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
 CREATE TABLE audit_logs (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT UNSIGNED NULL,

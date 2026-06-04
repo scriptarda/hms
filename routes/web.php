@@ -59,12 +59,24 @@ $router->group(['middleware' => ['AuthMiddleware', 'CsrfMiddleware']], function 
     $router->get('/assets', 'AssetController@index');
     $router->get('/assets/create', 'AssetController@create');
     $router->post('/assets/store', 'AssetController@store');
+    $router->get('/assets/data/list', 'AssetController@dataList');
+    $router->get('/assets/api/list', 'AssetController@dataList');
+    $router->get('/assets/api/warranty', 'AssetController@apiWarranty');
+    $router->post('/assets/api/store', 'AssetController@apiStore');
+    $router->get('/assets/api/{id}', 'AssetController@apiShow');
+    $router->get('/assets/api/{id}/history', 'AssetController@apiHistory');
+    $router->get('/assets/api/{id}/qr', 'AssetController@apiQR');
+    $router->post('/assets/api/{id}/update', 'AssetController@apiUpdate');
+    $router->post('/assets/api/{id}/delete', 'AssetController@apiDelete');
+    $router->post('/assets/api/{id}/assign', 'AssetController@apiAssign');
+    $router->post('/assets/api/{id}/return', 'AssetController@apiReturn');
     $router->get('/assets/{id}', 'AssetController@show');
     $router->get('/assets/{id}/edit', 'AssetController@edit');
     $router->post('/assets/{id}/update', 'AssetController@update');
     $router->get('/assets/{id}/qr', 'AssetController@generateQR');
     $router->post('/assets/{id}/assign', 'AssetController@assignAsset');
-    $router->get('/assets/data/list', 'AssetController@dataList');
+    $router->post('/assets/{id}/return', 'AssetController@returnAsset');
+    $router->post('/assets/{id}/delete', 'AssetController@delete');
 
     // Maintenance
     $router->get('/maintenance', 'MaintenanceController@index');
@@ -90,11 +102,18 @@ $router->group(['middleware' => ['AuthMiddleware', 'CsrfMiddleware']], function 
     // Service Requests
     $router->get('/service-requests', 'ServiceRequestController@index');
     $router->get('/service-requests/catalog', 'ServiceRequestController@catalog');
+    $router->get('/service-requests/api/catalog', 'ServiceRequestController@catalogData');
+    $router->get('/service-requests/api/forms/{type}', 'ServiceRequestController@formSchema');
+    $router->get('/service-requests/api/list', 'ServiceRequestController@dataList');
+    $router->get('/service-requests/api/{id}/tracking', 'ServiceRequestController@tracking');
     $router->get('/service-requests/create/{type}', 'ServiceRequestController@create');
     $router->post('/service-requests/store', 'ServiceRequestController@store');
     $router->get('/service-requests/{id}', 'ServiceRequestController@show');
     $router->post('/service-requests/{id}/approve', 'ServiceRequestController@approve');
     $router->post('/service-requests/{id}/reject', 'ServiceRequestController@reject');
+    $router->post('/service-requests/{id}/fulfillment/start', 'ServiceRequestController@startFulfillment');
+    $router->post('/service-requests/{id}/fulfillment/complete', 'ServiceRequestController@completeFulfillment');
+    $router->post('/service-requests/{id}/cancel', 'ServiceRequestController@cancel');
 
     // Knowledge Base
     $router->get('/knowledge', 'KnowledgeController@index');
