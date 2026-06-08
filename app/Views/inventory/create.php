@@ -50,6 +50,10 @@
                     <div class="form-text small">System triggers notification when stock is equal or lower than this.</div>
                 </div>
                 <div class="col-md-3">
+                    <label class="form-label fw-bold">Reorder Quantity</label>
+                    <input type="number" class="form-control" name="reorder_quantity" value="10" min="0">
+                </div>
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Min Allowed Stock</label>
                     <input type="number" class="form-control" name="min_quantity" value="0" min="0">
                 </div>
@@ -61,17 +65,32 @@
                 <hr class="my-4 border-light">
                 <h5 class="fw-bold">Supplier & Logistics</h5>
 
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Unit Cost ($)</label>
                     <input type="number" step="0.01" class="form-control" name="unit_cost" placeholder="0.00">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Storage Location / Rack</label>
                     <input type="text" class="form-control" name="location" placeholder="e.g. Warehouse A-2, Row 4">
                 </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Supplier Info</label>
-                    <input type="text" class="form-control" name="supplier" placeholder="e.g. Hamilton Medical Supply Inc">
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Preferred Supplier</label>
+                    <select class="form-select" name="supplier_id">
+                        <option value="">No tracked supplier</option>
+                        <?php foreach($suppliers as $supplier): ?>
+                            <option value="<?= (int)$supplier->id ?>"><?= htmlspecialchars($supplier->name) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Supplier Fallback</label>
+                    <input type="text" class="form-control" name="supplier" placeholder="Untracked supplier name">
+                </div>
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="is_active" id="isActive" checked>
+                        <label class="form-check-label fw-semibold" for="isActive">Active item</label>
+                    </div>
                 </div>
             </div>
 

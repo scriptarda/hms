@@ -36,6 +36,7 @@ spl_autoload_register(function ($class) {
     // Map namespace prefixes to directories
     $prefixes = [
         'App\\Controllers\\'   => APP_PATH . '/Controllers/',
+        'App\\Jobs\\'          => APP_PATH . '/Jobs/',
         'App\\Models\\'        => APP_PATH . '/Models/',
         'App\\Services\\'      => APP_PATH . '/Services/',
         'App\\Repositories\\'  => APP_PATH . '/Repositories/',

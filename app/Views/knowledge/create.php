@@ -6,7 +6,7 @@
 
 <div class="card shadow-sm border-0">
     <div class="card-body">
-        <form action="<?= View::url('knowledge/store') ?>" method="POST">
+        <form action="<?= View::url('knowledge/store') ?>" method="POST" enctype="multipart/form-data">
             <?= CSRF::field() ?>
             <div class="row g-3 mb-4">
                 <div class="col-md-8">
@@ -39,6 +39,16 @@
                     <div class="form-text">Comma-separated tags for index matching.</div>
                 </div>
                 <div class="col-md-3">
+                    <label class="form-label fw-bold">Article Type</label>
+                    <select class="form-select" name="article_type">
+                        <option value="guide">Guide</option>
+                        <option value="faq">FAQ</option>
+                        <option value="procedure">Procedure</option>
+                        <option value="policy">Policy</option>
+                        <option value="troubleshooting">Troubleshooting</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Status *</label>
                     <select class="form-select" name="status" required>
                         <option value="draft">Draft - Private</option>
@@ -52,6 +62,17 @@
                             Pin as Featured / Popular
                         </label>
                     </div>
+                </div>
+                <div class="col-md-3 d-flex align-items-center">
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" name="is_faq" id="isFaq">
+                        <label class="form-check-label fw-semibold" for="isFaq">Show in FAQ</label>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-bold">Attachments</label>
+                    <input type="file" class="form-control" name="attachments[]" multiple>
+                    <div class="form-text">Attach PDFs, images, spreadsheets, or SOP documents.</div>
                 </div>
             </div>
 

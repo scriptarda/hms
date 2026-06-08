@@ -1,4 +1,4 @@
-<?php use App\Helpers\View; $qrUrl = View::url('qr/asset/' . $asset->id); ?>
+<?php use App\Helpers\View; $qrUrl = View::url('qr/asset/' . $asset->id); $ticketId = $_GET['ticket'] ?? ''; ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -150,6 +150,18 @@
             <small class="opacity-75">Clinical Asset Registry Quick-Scan</small>
         </div>
         <div class="content">
+            <?php if (!empty($ticketId)): ?>
+                <div class="alert alert-success d-flex align-items-center mb-3" role="alert">
+                    <i class="bi bi-check-circle me-2"></i>
+                    <div>Issue reported. Ticket #<?= htmlspecialchars($ticketId) ?> was created.</div>
+                </div>
+            <?php endif; ?>
+            <?php if (!empty($flashSuccess)): ?>
+                <div class="alert alert-success d-flex align-items-center mb-3" role="alert"><i class="bi bi-check-circle me-2"></i><?= htmlspecialchars($flashSuccess) ?></div>
+            <?php endif; ?>
+            <?php if (!empty($flashError)): ?>
+                <div class="alert alert-danger d-flex align-items-center mb-3" role="alert"><i class="bi bi-exclamation-triangle me-2"></i><?= htmlspecialchars($flashError) ?></div>
+            <?php endif; ?>
             <div class="card border-0 bg-light p-3 mb-4">
                 <div class="d-flex align-items-center gap-3">
                     <div class="bg-primary text-white rounded p-2"><i class="bi bi-hdd-stack fs-3"></i></div>
@@ -169,10 +181,14 @@
                 <div class="detail-item"><span class="detail-label">Serial Number</span><span class="detail-value text-monospace"><?= htmlspecialchars($asset->serial_number ?? '-') ?></span></div>
                 <div class="detail-item"><span class="detail-label">Department</span><span class="detail-value"><?= htmlspecialchars($asset->department_name ?? '-') ?></span></div>
                 <div class="detail-item"><span class="detail-label">Building Location</span><span class="detail-value"><?= htmlspecialchars($asset->building_name ?? '-') ?></span></div>
+                <?php if (!empty($asset->assigned_user_name)): ?>
+                <div class="detail-item"><span class="detail-label">Assigned User</span><span class="detail-value"><?= htmlspecialchars($asset->assigned_user_name) ?></span></div>
+                <?php endif; ?>
             </div>
 
             <div class="d-flex flex-column gap-2 mt-5">
-                <a href="<?= View::url('tickets/create?asset_id=' . $asset->id) ?>" class="action-button"><i class="bi bi-exclamation-octagon me-2"></i>Report Incident</a>
+                <a href="<?= View::url('qr/asset/' . $asset->id . '/report') ?>" class="action-button"><i class="bi bi-exclamation-octagon me-2"></i>Report Issue Now</a>
+                <a href="<?= View::url('qr/scan') ?>" class="btn btn-outline-primary py-2 fw-medium rounded-pill"><i class="bi bi-qr-code-scan me-1"></i>Scan Another Asset</a>
                 <a href="<?= View::url('/') ?>" class="btn btn-outline-secondary py-2 fw-medium rounded-pill"><i class="bi bi-house-door me-1"></i>Employee Portal</a>
             </div>
         </div>

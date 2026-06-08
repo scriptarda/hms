@@ -40,15 +40,19 @@
                 <hr class="my-4 border-light">
                 <h5 class="fw-bold">Stock Threshold Settings</h5>
 
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Reorder Alert Level *</label>
                     <input type="number" class="form-control" name="reorder_level" value="<?= $item->reorder_level ?>" required min="0">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Reorder Quantity</label>
+                    <input type="number" class="form-control" name="reorder_quantity" value="<?= (int)($item->reorder_quantity ?? 0) ?>" min="0">
+                </div>
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Min Allowed Stock</label>
                     <input type="number" class="form-control" name="min_quantity" value="<?= $item->min_quantity ?>" min="0">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Max Allowed Stock</label>
                     <input type="number" class="form-control" name="max_quantity" value="<?= $item->max_quantity ?>" min="0">
                 </div>
@@ -56,17 +60,32 @@
                 <hr class="my-4 border-light">
                 <h5 class="fw-bold">Supplier & Logistics</h5>
 
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Unit Cost ($)</label>
                     <input type="number" step="0.01" class="form-control" name="unit_cost" value="<?= $item->unit_cost ?>">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Storage Location / Rack</label>
                     <input type="text" class="form-control" name="location" value="<?= htmlspecialchars($item->location) ?>">
                 </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Supplier Info</label>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Preferred Supplier</label>
+                    <select class="form-select" name="supplier_id">
+                        <option value="">No tracked supplier</option>
+                        <?php foreach($suppliers as $supplier): ?>
+                            <option value="<?= (int)$supplier->id ?>" <?= (int)($item->supplier_id ?? 0) === (int)$supplier->id ? 'selected' : '' ?>><?= htmlspecialchars($supplier->name) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Supplier Fallback</label>
                     <input type="text" class="form-control" name="supplier" value="<?= htmlspecialchars($item->supplier) ?>">
+                </div>
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="is_active" id="isActive" <?= (int)$item->is_active ? 'checked' : '' ?>>
+                        <label class="form-check-label fw-semibold" for="isActive">Active item</label>
+                    </div>
                 </div>
             </div>
 

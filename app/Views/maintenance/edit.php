@@ -1,101 +1,111 @@
-<?php use App\Helpers\View; use App\Helpers\CSRF; View::startSection('content'); ?>
-<div class="page-header">
-    <h1>Edit Work Order: #WO-<?= str_pad($task->id, 4, '0', STR_PAD_LEFT) ?></h1>
-    <p>Update task scheduling, assignments, and specification parameters.</p>
+<?php use App\Helpers\View; use App\Helpers\CSRF; use App\Models\MaintenanceTask;
+$checklistText = implode("\n", array_map(fn($item) => $item['label'] ?? '', $checklist ?? []));
+View::startSection('content'); ?>
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+        <h1>Edit <?= htmlspecialchars(MaintenanceTask::workOrderLabel($task)) ?></h1>
+        <p>Update work order scope, schedule, status, technician assignment, and checklist.</p>
+    </div>
+    <div class="page-actions">
+        <a href="<?= View::url('maintenance/' . $task->id) ?>" class="btn btn-outline-primary"><i class="bi bi-arrow-left me-1"></i>Details</a>
+    </div>
 </div>
 
 <div class="card shadow-sm border-0">
     <div class="card-body">
         <form action="<?= View::url('maintenance/' . $task->id . '/update') ?>" method="POST">
             <?= CSRF::field() ?>
-            <div class="row g-3 mb-4">
+            <div class="row g-3">
                 <div class="col-12">
-                    <label class="form-label fw-bold">Work Order Title *</label>
+                    <label class="form-label fw-bold">Title *</label>
                     <input type="text" class="form-control" name="title" value="<?= htmlspecialchars($task->title) ?>" required>
                 </div>
                 <div class="col-12">
-                    <label class="form-label fw-bold">Detailed Description</label>
-                    <textarea class="form-control" name="description" rows="3"><?= htmlspecialchars($task->description) ?></textarea>
+                    <label class="form-label fw-bold">Description</label>
+                    <textarea class="form-control" name="description" rows="3"><?= htmlspecialchars($task->description ?? '') ?></textarea>
                 </div>
-
                 <div class="col-md-6">
                     <label class="form-label fw-bold">Linked Asset</label>
                     <select class="form-select select2" name="asset_id">
-                        <option value="">None / Search Asset Tag...</option>
-                        <?php foreach ($assets as $ast): ?>
-                            <option value="<?= $ast->id ?>" <?= $task->asset_id == $ast->id ? 'selected' : '' ?>><?= htmlspecialchars($ast->asset_tag . ' — ' . $ast->name) ?></option>
+                        <option value="">No linked asset</option>
+                        <?php foreach ($assets as $asset): ?>
+                            <option value="<?= (int)$asset->id ?>" <?= (int)$task->asset_id === (int)$asset->id ? 'selected' : '' ?>><?= htmlspecialchars($asset->asset_tag . ' - ' . $asset->name) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label fw-bold">Responsible Department</label>
+                    <label class="form-label fw-bold">Department</label>
                     <select class="form-select" name="department_id">
-                        <option value="">Select Department...</option>
+                        <option value="">No department</option>
                         <?php foreach ($departments as $dept): ?>
-                            <option value="<?= $dept->id ?>" <?= $task->department_id == $dept->id ? 'selected' : '' ?>><?= htmlspecialchars($dept->name) ?></option>
+                            <option value="<?= (int)$dept->id ?>" <?= (int)$task->department_id === (int)$dept->id ? 'selected' : '' ?>><?= htmlspecialchars($dept->name) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
-
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Work Order Type *</label>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Type *</label>
                     <select class="form-select" name="type" required>
-                        <option value="preventive" <?= $task->type === 'preventive' ? 'selected' : '' ?>>Preventive PM</option>
-                        <option value="corrective" <?= $task->type === 'corrective' ? 'selected' : '' ?>>Corrective</option>
-                        <option value="emergency" <?= $task->type === 'emergency' ? 'selected' : '' ?>>Emergency</option>
-                        <option value="inspection" <?= $task->type === 'inspection' ? 'selected' : '' ?>>Inspection</option>
+                        <?php foreach (['preventive','corrective','inspection','emergency'] as $type): ?>
+                            <option value="<?= $type ?>" <?= $task->type === $type ? 'selected' : '' ?>><?= ucwords($type) ?></option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Priority *</label>
                     <select class="form-select" name="priority" required>
-                        <option value="low" <?= $task->priority === 'low' ? 'selected' : '' ?>>Low</option>
-                        <option value="medium" <?= $task->priority === 'medium' ? 'selected' : '' ?>>Medium</option>
-                        <option value="high" <?= $task->priority === 'high' ? 'selected' : '' ?>>High</option>
-                        <option value="critical" <?= $task->priority === 'critical' ? 'selected' : '' ?>>Critical</option>
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Status *</label>
-                    <select class="form-select" name="status" required>
-                        <option value="scheduled" <?= $task->status === 'scheduled' ? 'selected' : '' ?>>Scheduled</option>
-                        <option value="in_progress" <?= $task->status === 'in_progress' ? 'selected' : '' ?>>In Progress</option>
-                        <option value="completed" <?= $task->status === 'completed' ? 'selected' : '' ?>>Completed</option>
-                        <option value="overdue" <?= $task->status === 'overdue' ? 'selected' : '' ?>>Overdue</option>
-                        <option value="cancelled" <?= $task->status === 'cancelled' ? 'selected' : '' ?>>Cancelled</option>
-                    </select>
-                </div>
-
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Scheduled Start Date *</label>
-                    <input type="date" class="form-control" name="scheduled_date" value="<?= $task->scheduled_date ?>" required>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Due Date / Deadline *</label>
-                    <input type="date" class="form-control" name="due_date" value="<?= $task->due_date ?>" required>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Estimated Hours</label>
-                    <input type="number" step="0.1" class="form-control" name="estimated_hours" value="<?= $task->estimated_hours ?>">
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label fw-bold">Assign Technician</label>
-                    <select class="form-select" name="assigned_to">
-                        <option value="">Unassigned</option>
-                        <?php foreach ($technicians as $tech): ?>
-                            <option value="<?= $tech->id ?>" <?= $task->assigned_to == $tech->id ? 'selected' : '' ?>><?= htmlspecialchars($tech->first_name . ' ' . $tech->last_name) ?></option>
+                        <?php foreach (['critical','high','medium','low'] as $priority): ?>
+                            <option value="<?= $priority ?>" <?= $task->priority === $priority ? 'selected' : '' ?>><?= ucwords($priority) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Status *</label>
+                    <select class="form-select" name="status" required>
+                        <?php foreach (['scheduled','in_progress','overdue','completed','cancelled'] as $status): ?>
+                            <option value="<?= $status ?>" <?= $task->status === $status ? 'selected' : '' ?>><?= ucwords(str_replace('_', ' ', $status)) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Estimated Hours</label>
+                    <input type="number" step="0.1" class="form-control" name="estimated_hours" value="<?= htmlspecialchars((string)($task->estimated_hours ?? '')) ?>">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Scheduled Date *</label>
+                    <input type="date" class="form-control" name="scheduled_date" value="<?= htmlspecialchars($task->scheduled_date) ?>" required>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Due Date *</label>
+                    <input type="date" class="form-control" name="due_date" value="<?= htmlspecialchars($task->due_date) ?>" required>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Technician</label>
+                    <select class="form-select" name="assigned_to">
+                        <option value="">Unassigned queue</option>
+                        <?php foreach ($technicians as $tech): ?>
+                            <option value="<?= (int)$tech->id ?>" <?= (int)$task->assigned_to === (int)$tech->id ? 'selected' : '' ?>><?= htmlspecialchars($tech->first_name . ' ' . $tech->last_name) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Failure Code</label>
+                    <input type="text" class="form-control" name="failure_code" value="<?= htmlspecialchars($task->failure_code ?? '') ?>">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Downtime Minutes</label>
+                    <input type="number" class="form-control" name="downtime_minutes" value="<?= (int)($task->downtime_minutes ?? 0) ?>">
+                </div>
                 <div class="col-12">
-                    <label class="form-label fw-bold">Planner Notes</label>
-                    <textarea class="form-control" name="notes" rows="2"><?= htmlspecialchars($task->notes) ?></textarea>
+                    <label class="form-label fw-bold">Checklist</label>
+                    <textarea class="form-control" name="checklist" rows="4"><?= htmlspecialchars($checklistText) ?></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-bold">Notes</label>
+                    <textarea class="form-control" name="notes" rows="2"><?= htmlspecialchars($task->notes ?? '') ?></textarea>
                 </div>
             </div>
-
-            <div class="d-flex gap-2">
-                <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i>Save Changes</button>
+            <div class="d-flex gap-2 mt-4">
+                <button class="btn btn-primary"><i class="bi bi-save me-1"></i>Save Changes</button>
                 <a href="<?= View::url('maintenance/' . $task->id) ?>" class="btn btn-outline-secondary">Cancel</a>
             </div>
         </form>
@@ -103,8 +113,6 @@
 </div>
 <?php View::endSection(); View::startSection('scripts'); ?>
 <script>
-    $(document).ready(function() {
-        initSelect2('.select2');
-    });
+$(function() { initSelect2('.select2'); });
 </script>
 <?php View::endSection(); ?>

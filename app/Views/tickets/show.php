@@ -74,8 +74,19 @@ View::startSection('content'); ?>
                         <span><?= htmlspecialchars(($ticket->building_name ?? '-') . ($ticket->room_id ? ' / Room '.$ticket->room_id : '')) ?></span>
                     </div>
                     <div class="col-sm-4">
-                        <small class="text-muted d-block">SLA Target Due</small>
-                        <span class="text-danger fw-semibold"><?= View::date($ticket->sla_due_at, 'M d, Y H:i') ?></span>
+                        <small class="text-muted d-block">Response SLA</small>
+                        <?= View::statusBadge($ticket->response_sla_status ?? 'on_track') ?>
+                        <small class="d-block text-muted">Due <?= View::date($ticket->response_due_at ?? null, 'M d, Y H:i') ?></small>
+                    </div>
+                    <div class="col-sm-4">
+                        <small class="text-muted d-block">Resolution SLA</small>
+                        <?= View::statusBadge($ticket->resolution_sla_status ?? $ticket->sla_status ?? 'on_track') ?>
+                        <small class="d-block text-muted">Due <?= View::date($ticket->resolution_due_at ?? $ticket->sla_due_at ?? null, 'M d, Y H:i') ?></small>
+                    </div>
+                    <div class="col-sm-4">
+                        <small class="text-muted d-block">First Response</small>
+                        <span class="fw-semibold"><?= View::date($ticket->responded_at ?? null, 'M d, Y H:i') ?></span>
+                        <small class="d-block text-muted">Escalation level <?= (int)($ticket->escalation_level ?? 0) ?></small>
                     </div>
                 </div>
 

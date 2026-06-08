@@ -3,8 +3,11 @@ namespace App\Controllers;
 
 use App\Helpers\BaseController;
 use App\Helpers\Session;
+use App\Helpers\CSRF;
 use App\Helpers\Database;
 use App\Services\AssetService;
+use App\Services\NotificationService;
+use App\Services\SlaMonitorService;
 
 class AssetController extends BaseController
 {
@@ -163,6 +166,145 @@ class AssetController extends BaseController
         ], null);
     }
 
+    public function qrViewByTag(string $tag): void
+    {
+        $tag = rawurldecode($tag);
+        $asset = $this->db->fetch("SELECT id FROM assets WHERE asset_tag = ? AND deleted_at IS NULL", [$tag]);
+        if (!$asset) {
+            Session::flash('error', 'No active asset was found for tag "' . $tag . '".');
+            $this->redirect('/qr/scan');
+        }
+
+        $this->redirect('/qr/asset/' . $asset->id);
+    }
+
+    public function scanner(): void
+    {
+        $this->view('assets/scanner', [
+            'pageTitle' => 'Scan Asset QR',
+        ], null);
+    }
+
+    public function reportIssue(string $id): void
+    {
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
+
+        $this->view('assets/report', [
+            'pageTitle' => 'Report Issue: ' . $bundle['asset']->asset_tag,
+            'asset' => $bundle['asset'],
+        ], null);
+    }
+
+    public function submitIssue(string $id): void
+    {
+        if (!CSRF::validate()) {
+            Session::flash('error', 'Invalid request. Please try again.');
+            $this->redirect('/qr/asset/' . $id . '/report');
+        }
+
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
+
+        $title = trim($_POST['title'] ?? '');
+        $description = trim($_POST['description'] ?? '');
+        if ($title === '' || $description === '') {
+            Session::flash('error', 'Issue title and description are required.');
+            $this->redirect('/qr/asset/' . $id . '/report');
+        }
+
+        $priority = $_POST['priority'] ?? 'medium';
+        if (!in_array($priority, ['critical', 'high', 'medium', 'low'], true)) {
+            $priority = 'medium';
+        }
+
+        $requesterId = $this->resolveReporterUserId(trim($_POST['reporter_email'] ?? ''));
+        if ($requesterId <= 0) {
+            Session::flash('error', 'No active user is available to own this ticket. Please contact the administrator.');
+            $this->redirect('/qr/asset/' . $id . '/report');
+        }
+
+        $ticketNumber = $this->generateTicketNumber();
+        $asset = $bundle['asset'];
+        $reporterName = trim($_POST['reporter_name'] ?? '');
+        $reporterEmail = trim($_POST['reporter_email'] ?? '');
+        $reporterPhone = trim($_POST['reporter_phone'] ?? '');
+
+        $ticketDescription = implode("\n", array_filter([
+            'QR asset report submitted from mobile scan.',
+            '',
+            'Reporter: ' . ($reporterName ?: 'Not provided'),
+            'Reporter email: ' . ($reporterEmail ?: 'Not provided'),
+            'Reporter phone: ' . ($reporterPhone ?: 'Not provided'),
+            '',
+            'Asset: ' . $asset->asset_tag . ' - ' . $asset->name,
+            'Serial: ' . ($asset->serial_number ?: '-'),
+            'Location: ' . (trim(($asset->building_name ?? '') . ' ' . ($asset->floor_name ?? '') . ' ' . ($asset->room_number ?? '') . ' ' . ($asset->room_name ?? '')) ?: '-'),
+            '',
+            'Issue details:',
+            $description,
+        ]));
+
+        try {
+            $ticketId = $this->db->insert('tickets', [
+                'ticket_number' => $ticketNumber,
+                'title' => $title,
+                'description' => $ticketDescription,
+                'category_id' => $this->findTicketCategoryForAsset($asset),
+                'priority' => $priority,
+                'status' => 'new',
+                'requester_id' => $requesterId,
+                'department_id' => $asset->department_id ?: null,
+                'building_id' => $asset->building_id ?: null,
+                'floor_id' => $asset->floor_id ?: null,
+                'room_id' => $asset->room_id ?: null,
+                'asset_id' => $asset->id,
+                'sla_due_at' => $this->slaDueAt($priority),
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+
+            $this->db->insert('ticket_history', [
+                'ticket_id' => $ticketId,
+                'user_id' => $requesterId,
+                'action' => 'created_from_qr_scan',
+                'new_value' => $asset->asset_tag,
+            ]);
+
+            $this->db->insert('asset_history', [
+                'asset_id' => $asset->id,
+                'user_id' => $requesterId,
+                'action' => 'qr_issue_reported',
+                'description' => 'Issue reported from QR scan: ' . $ticketNumber,
+            ]);
+
+            $this->notifyAssetSupportTeam($ticketId, $ticketNumber, $asset->asset_tag);
+            try {
+                (new SlaMonitorService())->applySlaToTicket($ticketId);
+            } catch (\Exception $e) {
+                // SLA sync should not block QR issue reporting.
+            }
+        } catch (\Exception $e) {
+            Session::flash('error', 'Failed to create ticket: ' . $e->getMessage());
+            $this->redirect('/qr/asset/' . $id . '/report');
+        }
+
+        Session::flash('success', 'Issue reported successfully. Ticket ' . $ticketNumber . ' was created.');
+        $this->redirect('/qr/asset/' . $id . '?ticket=' . urlencode($ticketNumber));
+    }
+
+    public function qrLabels(): void
+    {
+        $this->view('assets/labels', [
+            'pageTitle' => 'Asset QR Labels',
+            'assets' => $this->service->registry($this->assetFilters()),
+        ], null);
+    }
+
     public function dataList(): void
     {
         $this->json(['data' => $this->service->registry($this->assetFilters())]);
@@ -289,5 +431,90 @@ class AssetController extends BaseController
         $role = Session::get('role', 'staff');
         return in_array($role, ['manager', 'administrator', 'super_administrator', 'biomedical_engineer', 'technician'], true)
             || in_array('assets.edit', Session::get('permissions', []), true);
+    }
+
+    private function resolveReporterUserId(string $email): int
+    {
+        if (Session::isLoggedIn()) {
+            return (int)Session::userId();
+        }
+
+        if ($email !== '') {
+            $user = $this->db->fetch("SELECT id FROM users WHERE email = ? AND status='active' AND deleted_at IS NULL", [$email]);
+            if ($user) {
+                return (int)$user->id;
+            }
+        }
+
+        $fallback = $this->db->fetch(
+            "SELECT u.id FROM users u
+             JOIN user_roles ur ON u.id = ur.user_id
+             JOIN roles r ON ur.role_id = r.id
+             WHERE r.slug IN ('administrator', 'super_administrator') AND u.status='active' AND u.deleted_at IS NULL
+             ORDER BY FIELD(r.slug, 'administrator', 'super_administrator'), u.id ASC LIMIT 1"
+        );
+
+        if ($fallback) {
+            return (int)$fallback->id;
+        }
+
+        return (int)$this->db->fetchColumn("SELECT id FROM users WHERE status='active' AND deleted_at IS NULL ORDER BY id ASC LIMIT 1");
+    }
+
+    private function generateTicketNumber(): string
+    {
+        $last = (int)$this->db->fetchColumn("SELECT MAX(id) FROM tickets");
+        return 'HEMS-' . str_pad($last + 9400, 4, '0', STR_PAD_LEFT);
+    }
+
+    private function slaDueAt(string $priority): string
+    {
+        $minutes = $GLOBALS['appConfig']['sla_defaults'][$priority] ?? 480;
+        return date('Y-m-d H:i:s', time() + ($minutes * 60));
+    }
+
+    private function findTicketCategoryForAsset(object $asset): ?int
+    {
+        $names = ['Medical Equipment', 'Hardware'];
+        if (!empty($asset->category_name) && stripos($asset->category_name, 'IT') !== false) {
+            $names = ['Hardware', 'Network'];
+        }
+
+        foreach ($names as $name) {
+            $id = $this->db->fetchColumn(
+                "SELECT id FROM ticket_categories WHERE name LIKE ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1",
+                ['%' . $name . '%']
+            );
+            if ($id) {
+                return (int)$id;
+            }
+        }
+
+        return null;
+    }
+
+    private function notifyAssetSupportTeam(int $ticketId, string $ticketNumber, string $assetTag): void
+    {
+        $users = $this->db->fetchAll(
+            "SELECT DISTINCT u.id FROM users u
+             JOIN user_roles ur ON u.id = ur.user_id
+             JOIN roles r ON ur.role_id = r.id
+             WHERE r.slug IN ('technician', 'biomedical_engineer', 'administrator', 'super_administrator')
+             AND u.status='active' AND u.deleted_at IS NULL"
+        );
+
+        foreach ($users as $user) {
+            try {
+                (new NotificationService())->send(
+                    (int)$user->id,
+                    NOTIFY_TICKET_UPDATED,
+                    'QR Asset Issue Reported',
+                    "Ticket {$ticketNumber} was created from asset {$assetTag}.",
+                    '/tickets/' . $ticketId
+                );
+            } catch (\Exception $e) {
+                // Notification delivery should not block ticket creation.
+            }
+        }
     }
 }

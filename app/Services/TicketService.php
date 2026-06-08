@@ -14,11 +14,12 @@ class TicketService
     {
         $data['ticket_number'] = $this->repo->generateTicketNumber();
         $data['requester_id'] = Session::userId();
-        $data['status'] = 'new';
+        $data['status'] = $data['status'] ?? 'new';
         $data['sla_due_at'] = $this->calculateSLA($data['priority'] ?? 'medium');
         $data['created_at'] = date('Y-m-d H:i:s');
         $data['updated_at'] = date('Y-m-d H:i:s');
         $id = $this->repo->create($data);
+        $this->syncSla($id, !empty($data['assigned_to']));
         $this->repo->addHistory(['ticket_id'=>$id,'user_id'=>Session::userId(),'action'=>'created','new_value'=>$data['ticket_number']]);
         $this->notify($id, 'Ticket Created', "New ticket {$data['ticket_number']}: {$data['title']}");
         return $id;
@@ -27,6 +28,7 @@ class TicketService
     public function assignTicket(int $ticketId, int $assigneeId, ?string $notes = null): void
     {
         $this->repo->update($ticketId, ['assigned_to'=>$assigneeId, 'status'=>'assigned']);
+        $this->syncSla($ticketId, true);
         $this->repo->addHistory(['ticket_id'=>$ticketId,'user_id'=>Session::userId(),'action'=>'assigned','new_value'=>$assigneeId]);
         Database::getInstance()->insert('ticket_assignments', ['ticket_id'=>$ticketId,'assigned_by'=>Session::userId(),'assigned_to'=>$assigneeId,'notes'=>$notes]);
         $ticket = $this->repo->findById($ticketId);
@@ -35,6 +37,7 @@ class TicketService
 
     public function resolveTicket(int $ticketId, ?string $notes = null): void
     {
+        $this->syncSla($ticketId, true);
         $this->repo->update($ticketId, ['status'=>'resolved','resolved_at'=>date('Y-m-d H:i:s'),'resolution_notes'=>$notes]);
         $this->repo->addHistory(['ticket_id'=>$ticketId,'user_id'=>Session::userId(),'action'=>'resolved','new_value'=>$notes]);
     }
@@ -56,7 +59,21 @@ class TicketService
         $ticket = $this->repo->findById($ticketId);
         $newPriority = match($ticket->priority) { 'low'=>'medium','medium'=>'high','high'=>'critical', default=>'critical' };
         $this->repo->update($ticketId, ['priority'=>$newPriority,'sla_status'=>'warning']);
+        $this->syncSla($ticketId);
         $this->repo->addHistory(['ticket_id'=>$ticketId,'user_id'=>Session::userId(),'action'=>'escalated','old_value'=>$ticket->priority,'new_value'=>$newPriority]);
+    }
+
+    private function syncSla(int $ticketId, bool $markResponded = false): void
+    {
+        try {
+            $sla = new SlaMonitorService();
+            $sla->applySlaToTicket($ticketId);
+            if ($markResponded) {
+                $sla->markResponded($ticketId);
+            }
+        } catch (\Exception $e) {
+            // Ticket workflow should continue even if SLA metadata cannot be refreshed.
+        }
     }
 
     private function calculateSLA(string $priority): string
@@ -73,7 +90,7 @@ class TicketService
     private function notifyUser(int $userId, string $type, string $title, string $message, string $link = ''): void
     {
         try {
-            Database::getInstance()->insert('notifications', ['user_id'=>$userId,'type'=>$type,'title'=>$title,'message'=>$message,'link'=>$link]);
+            (new NotificationService())->send($userId, $type, $title, $message, $link);
         } catch (\Exception $e) {}
     }
 }

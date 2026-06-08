@@ -39,6 +39,8 @@ function hasPerm($slug, $perms) { return in_array($slug, $perms); }
                     <a href="<?= View::url('tickets') ?>"><i class="bi bi-exclamation-triangle"></i><span>Incidents</span></a></li>
                 <li class="nav-item <?= isActive('service-requests', $currentUrl) ?>">
                     <a href="<?= View::url('service-requests/catalog') ?>"><i class="bi bi-card-checklist"></i><span>Service Requests</span></a></li>
+                <li class="nav-item <?= isActive('sla', $currentUrl) ?>">
+                    <a href="<?= View::url('sla') ?>"><i class="bi bi-hourglass-split"></i><span>SLA</span></a></li>
                 <li class="nav-item <?= isActive('assets', $currentUrl) ?>">
                     <a href="<?= View::url('assets') ?>"><i class="bi bi-hdd-stack"></i><span>Assets</span></a></li>
                 <li class="nav-item <?= isActive('maintenance', $currentUrl) ?>">
@@ -138,7 +140,15 @@ function hasPerm($slug, $perms) { return in_array($slug, $perms); }
 <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script>window.BASE_URL = '<?= rtrim(View::url(""), "/") ?>';</script>
+<?php if (!empty($appConfig['realtime']['enabled'])): ?>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<?php endif; ?>
+<script>
+window.BASE_URL = '<?= rtrim(View::url(""), "/") ?>';
+window.AUTH_USER_ID = <?= (int)($user['id'] ?? Session::userId() ?? 0) ?>;
+window.SOCKET_IO_URL = '<?= !empty($appConfig['realtime']['enabled']) ? htmlspecialchars($appConfig['realtime']['socket_url'] ?? '') : '' ?>';
+window.NOTIFICATION_POLL_INTERVAL = <?= (int)($appConfig['notification_poll_interval'] ?? 30000) ?>;
+</script>
 <script src="<?= View::asset('js/app.js') ?>"></script>
 <?= View::section('scripts') ?>
 </body>

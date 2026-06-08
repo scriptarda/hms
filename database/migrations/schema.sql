@@ -162,8 +162,17 @@ CREATE TABLE tickets (
     floor_id BIGINT UNSIGNED NULL,
     room_id BIGINT UNSIGNED NULL,
     asset_id BIGINT UNSIGNED NULL,
+    sla_rule_id BIGINT UNSIGNED NULL,
+    response_due_at TIMESTAMP NULL,
+    responded_at TIMESTAMP NULL,
+    response_sla_status ENUM('on_track','warning','breached') DEFAULT 'on_track',
+    resolution_due_at TIMESTAMP NULL,
+    resolution_sla_status ENUM('on_track','warning','breached') DEFAULT 'on_track',
     sla_due_at TIMESTAMP NULL,
     sla_status ENUM('on_track','warning','breached') DEFAULT 'on_track',
+    last_sla_checked_at TIMESTAMP NULL,
+    escalation_level INT DEFAULT 0,
+    last_escalated_at TIMESTAMP NULL,
     resolved_at TIMESTAMP NULL,
     closed_at TIMESTAMP NULL,
     resolution_notes TEXT,
@@ -182,7 +191,9 @@ CREATE TABLE tickets (
     INDEX idx_ticket_priority (priority),
     INDEX idx_ticket_requester (requester_id),
     INDEX idx_ticket_assigned (assigned_to),
-    INDEX idx_ticket_sla (sla_status)
+    INDEX idx_ticket_sla (sla_status),
+    INDEX idx_ticket_response_sla (response_sla_status, response_due_at),
+    INDEX idx_ticket_resolution_sla (resolution_sla_status, resolution_due_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE ticket_comments (
@@ -311,13 +322,18 @@ CREATE TABLE asset_history (
 
 CREATE TABLE maintenance_tasks (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    work_order_number VARCHAR(30) UNIQUE,
     title VARCHAR(255) NOT NULL,
     description TEXT,
     asset_id BIGINT UNSIGNED NULL,
+    schedule_id BIGINT UNSIGNED NULL,
+    source_ticket_id BIGINT UNSIGNED NULL,
     type ENUM('preventive','corrective','emergency','inspection') DEFAULT 'preventive',
     priority ENUM('critical','high','medium','low') DEFAULT 'medium',
     status ENUM('scheduled','in_progress','completed','overdue','cancelled') DEFAULT 'scheduled',
     assigned_to BIGINT UNSIGNED NULL,
+    requested_by BIGINT UNSIGNED NULL,
+    completed_by BIGINT UNSIGNED NULL,
     department_id BIGINT UNSIGNED NULL,
     scheduled_date DATE,
     due_date DATE,
@@ -325,32 +341,52 @@ CREATE TABLE maintenance_tasks (
     estimated_hours DECIMAL(5,2),
     actual_hours DECIMAL(5,2),
     cost DECIMAL(12,2),
+    downtime_minutes INT DEFAULT 0,
+    failure_code VARCHAR(80),
+    checklist_json JSON NULL,
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL,
     FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL,
+    FOREIGN KEY (source_ticket_id) REFERENCES tickets(id) ON DELETE SET NULL,
     FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (completed_by) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
     INDEX idx_maint_status (status),
-    INDEX idx_maint_scheduled (scheduled_date)
+    INDEX idx_maint_scheduled (scheduled_date),
+    INDEX idx_maint_schedule (schedule_id),
+    INDEX idx_maint_due (due_date, status),
+    INDEX idx_maint_assignee (assigned_to, status),
+    INDEX idx_maint_type (type, priority)
 ) ENGINE=InnoDB;
 
 CREATE TABLE maintenance_schedules (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     asset_id BIGINT UNSIGNED NOT NULL,
+    department_id BIGINT UNSIGNED NULL,
     title VARCHAR(255) NOT NULL,
     description TEXT,
     frequency ENUM('daily','weekly','biweekly','monthly','quarterly','semi_annual','annual') NOT NULL,
+    priority ENUM('critical','high','medium','low') DEFAULT 'medium',
+    estimated_hours DECIMAL(5,2),
+    lead_time_days INT DEFAULT 7,
     last_performed DATE,
     next_due DATE,
     assigned_to BIGINT UNSIGNED NULL,
+    last_generated_task_id BIGINT UNSIGNED NULL,
+    checklist_json JSON NULL,
     is_active TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL,
     FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
-    FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+    FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+    FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (last_generated_task_id) REFERENCES maintenance_tasks(id) ON DELETE SET NULL,
+    INDEX idx_schedule_next_due (next_due, is_active),
+    INDEX idx_schedule_asset (asset_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE maintenance_logs (
@@ -358,14 +394,38 @@ CREATE TABLE maintenance_logs (
     task_id BIGINT UNSIGNED NOT NULL,
     user_id BIGINT UNSIGNED NOT NULL,
     action VARCHAR(100) NOT NULL,
+    status_from VARCHAR(50),
+    status_to VARCHAR(50),
     notes TEXT,
     parts_used TEXT,
+    labor_hours DECIMAL(5,2),
+    cost DECIMAL(12,2),
+    metadata_json JSON NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (task_id) REFERENCES maintenance_tasks(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB;
 
 -- ===================== INVENTORY TABLES =====================
+
+CREATE TABLE inventory_suppliers (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    code VARCHAR(50) UNIQUE,
+    contact_name VARCHAR(150),
+    email VARCHAR(150),
+    phone VARCHAR(50),
+    address TEXT,
+    lead_time_days INT DEFAULT 7,
+    payment_terms VARCHAR(150),
+    rating DECIMAL(3,2),
+    is_active TINYINT(1) DEFAULT 1,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    INDEX idx_supplier_active (is_active, deleted_at)
+) ENGINE=InnoDB;
 
 CREATE TABLE inventory_categories (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -388,16 +448,21 @@ CREATE TABLE inventory_items (
     min_quantity INT DEFAULT 0,
     max_quantity INT DEFAULT 0,
     reorder_level INT DEFAULT 0,
+    reorder_quantity INT DEFAULT 0,
     unit_cost DECIMAL(12,2),
     location VARCHAR(100),
+    supplier_id BIGINT UNSIGNED NULL,
     supplier VARCHAR(255),
+    last_restocked_at TIMESTAMP NULL,
     is_active TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL,
     FOREIGN KEY (category_id) REFERENCES inventory_categories(id) ON DELETE SET NULL,
+    FOREIGN KEY (supplier_id) REFERENCES inventory_suppliers(id) ON DELETE SET NULL,
     INDEX idx_inv_sku (sku),
-    INDEX idx_inv_qty (quantity, reorder_level)
+    INDEX idx_inv_qty (quantity, reorder_level),
+    INDEX idx_inv_supplier (supplier_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE inventory_transactions (
@@ -412,6 +477,34 @@ CREATE TABLE inventory_transactions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (item_id) REFERENCES inventory_items(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE inventory_purchase_requests (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_number VARCHAR(30) NOT NULL UNIQUE,
+    item_id BIGINT UNSIGNED NOT NULL,
+    supplier_id BIGINT UNSIGNED NULL,
+    requested_by BIGINT UNSIGNED NOT NULL,
+    approved_by BIGINT UNSIGNED NULL,
+    status ENUM('draft','submitted','approved','ordered','received','rejected','cancelled') DEFAULT 'submitted',
+    quantity INT NOT NULL,
+    unit_cost DECIMAL(12,2),
+    total_cost DECIMAL(12,2),
+    needed_by DATE,
+    submitted_at TIMESTAMP NULL,
+    approved_at TIMESTAMP NULL,
+    ordered_at TIMESTAMP NULL,
+    received_at TIMESTAMP NULL,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    FOREIGN KEY (item_id) REFERENCES inventory_items(id) ON DELETE CASCADE,
+    FOREIGN KEY (supplier_id) REFERENCES inventory_suppliers(id) ON DELETE SET NULL,
+    FOREIGN KEY (requested_by) REFERENCES users(id),
+    FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_pr_status (status),
+    INDEX idx_pr_item (item_id)
 ) ENGINE=InnoDB;
 
 -- ===================== SUPPORT TABLES =====================
@@ -438,6 +531,8 @@ CREATE TABLE knowledge_articles (
     excerpt TEXT,
     author_id BIGINT UNSIGNED NOT NULL,
     status ENUM('draft','published','archived') DEFAULT 'draft',
+    article_type ENUM('guide','faq','procedure','policy','troubleshooting') DEFAULT 'guide',
+    is_faq TINYINT(1) DEFAULT 0,
     is_featured TINYINT(1) DEFAULT 0,
     views INT DEFAULT 0,
     tags VARCHAR(500),
@@ -446,7 +541,23 @@ CREATE TABLE knowledge_articles (
     deleted_at TIMESTAMP NULL,
     FOREIGN KEY (category_id) REFERENCES knowledge_categories(id) ON DELETE SET NULL,
     FOREIGN KEY (author_id) REFERENCES users(id),
-    FULLTEXT INDEX idx_kb_search (title, content)
+    FULLTEXT INDEX idx_kb_search (title, excerpt, content, tags)
+) ENGINE=InnoDB;
+
+CREATE TABLE knowledge_attachments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    article_id BIGINT UNSIGNED NOT NULL,
+    uploaded_by BIGINT UNSIGNED NOT NULL,
+    original_name VARCHAR(255) NOT NULL,
+    stored_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    mime_type VARCHAR(120),
+    file_size INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    FOREIGN KEY (article_id) REFERENCES knowledge_articles(id) ON DELETE CASCADE,
+    FOREIGN KEY (uploaded_by) REFERENCES users(id),
+    INDEX idx_kb_attach_article (article_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE sla_rules (
@@ -456,9 +567,35 @@ CREATE TABLE sla_rules (
     response_time INT NOT NULL COMMENT 'in minutes',
     resolution_time INT NOT NULL COMMENT 'in minutes',
     escalation_time INT COMMENT 'in minutes',
+    warning_threshold INT DEFAULT 80 COMMENT 'percentage of target elapsed before warning',
+    escalation_role VARCHAR(50) DEFAULT 'manager',
+    notify_roles VARCHAR(255) DEFAULT 'technician,manager,administrator',
+    business_hours_only TINYINT(1) DEFAULT 0,
+    sort_order INT DEFAULT 0,
     is_active TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    INDEX idx_sla_priority_active (priority, is_active, deleted_at)
+) ENGINE=InnoDB;
+
+ALTER TABLE tickets
+    ADD CONSTRAINT fk_ticket_sla_rule FOREIGN KEY (sla_rule_id) REFERENCES sla_rules(id) ON DELETE SET NULL;
+
+CREATE TABLE sla_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_id BIGINT UNSIGNED NOT NULL,
+    rule_id BIGINT UNSIGNED NULL,
+    event_type ENUM('response_warning','response_breached','resolution_warning','resolution_breached','escalated','recalculated') NOT NULL,
+    old_status VARCHAR(30),
+    new_status VARCHAR(30),
+    escalation_level INT DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+    FOREIGN KEY (rule_id) REFERENCES sla_rules(id) ON DELETE SET NULL,
+    INDEX idx_sla_event_ticket (ticket_id, created_at),
+    INDEX idx_sla_event_type (event_type, created_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE notifications (
@@ -468,10 +605,125 @@ CREATE TABLE notifications (
     title VARCHAR(255) NOT NULL,
     message TEXT,
     link VARCHAR(500),
+    channel VARCHAR(30) DEFAULT 'in_app',
+    severity ENUM('info','success','warning','danger') DEFAULT 'info',
+    data_json JSON NULL,
     is_read TINYINT(1) DEFAULT 0,
+    read_at TIMESTAMP NULL,
+    delivered_at TIMESTAMP NULL,
+    email_sent_at TIMESTAMP NULL,
+    sms_queued_at TIMESTAMP NULL,
+    push_queued_at TIMESTAMP NULL,
+    expires_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    INDEX idx_notif_user (user_id, is_read)
+    INDEX idx_notif_user (user_id, is_read),
+    INDEX idx_notif_type (type, created_at),
+    INDEX idx_notif_created (created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE notification_preferences (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    type VARCHAR(50) NOT NULL,
+    in_app TINYINT(1) DEFAULT 1,
+    email TINYINT(1) DEFAULT 0,
+    sms TINYINT(1) DEFAULT 0,
+    push TINYINT(1) DEFAULT 0,
+    quiet_hours_start TIME NULL,
+    quiet_hours_end TIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY uq_notification_preference (user_id, type)
+) ENGINE=InnoDB;
+
+CREATE TABLE notification_delivery_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    notification_id BIGINT UNSIGNED NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    channel ENUM('in_app','email','sms','push') NOT NULL,
+    status ENUM('queued','sent','failed','skipped') DEFAULT 'queued',
+    provider VARCHAR(80),
+    recipient VARCHAR(255),
+    payload_json JSON NULL,
+    error_message TEXT,
+    queued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    sent_at TIMESTAMP NULL,
+    FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE SET NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_delivery_user (user_id, channel, status),
+    INDEX idx_delivery_notification (notification_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE notification_push_subscriptions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    endpoint VARCHAR(700) NOT NULL,
+    p256dh_key VARCHAR(255),
+    auth_token VARCHAR(255),
+    user_agent VARCHAR(500),
+    is_active TINYINT(1) DEFAULT 1,
+    last_seen_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY uq_push_endpoint (endpoint(255)),
+    INDEX idx_push_user (user_id, is_active)
+) ENGINE=InnoDB;
+
+CREATE TABLE notification_realtime_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    event_name VARCHAR(80) NOT NULL,
+    payload_json JSON NOT NULL,
+    status ENUM('pending','delivered','failed') DEFAULT 'pending',
+    attempts INT DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    delivered_at TIMESTAMP NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_realtime_pending (status, created_at),
+    INDEX idx_realtime_user (user_id, created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE report_schedules (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    name VARCHAR(150) NOT NULL,
+    report_type ENUM('tickets','assets','sla','maintenance','inventory','user_activity') NOT NULL,
+    format ENUM('pdf','excel','csv') DEFAULT 'pdf',
+    frequency ENUM('daily','weekly','monthly') DEFAULT 'weekly',
+    filters_json JSON NULL,
+    recipients TEXT,
+    channels_json JSON NULL,
+    next_run_at TIMESTAMP NULL,
+    last_run_at TIMESTAMP NULL,
+    is_active TINYINT(1) DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_report_schedule_due (is_active, next_run_at),
+    INDEX idx_report_schedule_user (user_id, report_type)
+) ENGINE=InnoDB;
+
+CREATE TABLE report_exports (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    schedule_id BIGINT UNSIGNED NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    report_type VARCHAR(50) NOT NULL,
+    format VARCHAR(20) NOT NULL,
+    file_path VARCHAR(500),
+    row_count INT DEFAULT 0,
+    status ENUM('generated','failed') DEFAULT 'generated',
+    error_message TEXT,
+    generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (schedule_id) REFERENCES report_schedules(id) ON DELETE SET NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_report_export_user (user_id, generated_at),
+    INDEX idx_report_export_schedule (schedule_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE service_requests (

@@ -4,7 +4,11 @@
         <h1>Asset Registry</h1>
         <p>Track asset IDs, ownership, location, warranty coverage, and lifecycle status.</p>
     </div>
-    <a href="<?= View::url('assets/create') ?>" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Register Asset</a>
+    <div class="page-actions">
+        <a href="<?= View::url('qr/scan') ?>" target="_blank" class="btn btn-outline-primary"><i class="bi bi-qr-code-scan me-1"></i>Scan QR</a>
+        <a href="<?= View::url('assets/qr/labels') ?>" target="_blank" class="btn btn-outline-secondary"><i class="bi bi-printer me-1"></i>QR Labels</a>
+        <a href="<?= View::url('assets/create') ?>" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Register Asset</a>
+    </div>
 </div>
 
 <div class="row g-3 mb-4">

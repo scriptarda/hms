@@ -3,285 +3,203 @@ namespace App\Controllers;
 
 use App\Helpers\BaseController;
 use App\Helpers\Session;
-use App\Helpers\CSRF;
-use App\Helpers\Validator;
-use App\Helpers\Database;
+use App\Services\InventoryService;
 
 class InventoryController extends BaseController
 {
-    private Database $db;
+    private InventoryService $service;
 
     public function __construct()
     {
-        $this->db = Database::getInstance();
+        $this->service = new InventoryService();
     }
 
     public function index(): void
     {
-        $category = $_GET['category_id'] ?? '';
-        $search = $_GET['search'] ?? '';
+        $this->view('inventory/index', array_merge(
+            ['pageTitle' => 'Inventory Dashboard'],
+            $this->service->dashboard()
+        ));
+    }
 
-        $sql = "SELECT i.*, ic.name as category_name
-                FROM inventory_items i
-                LEFT JOIN inventory_categories ic ON i.category_id = ic.id
-                WHERE i.deleted_at IS NULL";
-        
-        $params = [];
-        if ($category) { $sql .= " AND i.category_id = ?"; $params[] = $category; }
-        if ($search) {
-            $sql .= " AND (i.name LIKE ? OR i.sku LIKE ? OR i.location LIKE ?)";
-            $params[] = "%{$search}%"; $params[] = "%{$search}%"; $params[] = "%{$search}%";
-        }
-
-        $sql .= " ORDER BY i.name ASC";
-        $items = $this->db->fetchAll($sql, $params);
-
-        // Compute metrics
-        $totalItems = count($items);
-        $lowStock = 0;
-        $outOfStock = 0;
-        foreach ($items as $item) {
-            if ($item->quantity == 0) {
-                $outOfStock++;
-            } elseif ($item->quantity <= $item->reorder_level) {
-                $lowStock++;
-            }
-        }
-
-        $categories = $this->db->fetchAll("SELECT * FROM inventory_categories WHERE deleted_at IS NULL ORDER BY name");
-
-        $this->view('inventory/index', [
-            'pageTitle' => 'Inventory Control',
-            'items' => $items,
-            'categories' => $categories,
-            'metrics' => [
-                'total' => $totalItems,
-                'low' => $lowStock,
-                'out' => $outOfStock
-            ],
-            'filters' => ['category_id' => $category, 'search' => $search]
-        ]);
+    public function items(): void
+    {
+        $this->view('inventory/items', [
+            'pageTitle' => 'Inventory List',
+            'items' => $this->service->list($this->filters()),
+            'filters' => $this->filters(),
+        ] + $this->service->formData());
     }
 
     public function create(): void
     {
-        $categories = $this->db->fetchAll("SELECT * FROM inventory_categories WHERE deleted_at IS NULL ORDER BY name");
-        $this->view('inventory/create', [
-            'pageTitle' => 'Add Inventory Item',
-            'categories' => $categories
-        ]);
+        $this->view('inventory/create', ['pageTitle' => 'Add Inventory Item'] + $this->service->formData());
     }
 
     public function store(): void
     {
-        $v = new Validator($_POST);
-        $v->required('name')->required('sku')->required('quantity')->required('reorder_level');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
+        $result = $this->service->create($_POST, (int)Session::userId());
+        if (!$result['success']) {
+            Session::flash('error', $result['message']);
             $this->redirect('/inventory/create');
         }
 
-        // Verify SKU uniqueness
-        $exists = $this->db->fetch("SELECT id FROM inventory_items WHERE sku = ? AND deleted_at IS NULL", [trim($_POST['sku'])]);
-        if ($exists) {
-            Session::flash('error', 'SKU already registered.');
-            $this->redirect('/inventory/create');
-        }
-
-        $data = [
-            'name' => trim($_POST['name']),
-            'sku' => trim($_POST['sku']),
-            'category_id' => $_POST['category_id'] ?: null,
-            'description' => trim($_POST['description'] ?? ''),
-            'unit' => trim($_POST['unit'] ?? 'pcs'),
-            'quantity' => (int)$_POST['quantity'],
-            'min_quantity' => (int)($_POST['min_quantity'] ?? 0),
-            'max_quantity' => (int)($_POST['max_quantity'] ?? 0),
-            'reorder_level' => (int)$_POST['reorder_level'],
-            'unit_cost' => $_POST['unit_cost'] ?: null,
-            'location' => trim($_POST['location'] ?? ''),
-            'supplier' => trim($_POST['supplier'] ?? ''),
-            'is_active' => 1
-        ];
-
-        $id = $this->db->insert('inventory_items', $data);
-
-        // Add initial transaction if quantity > 0
-        if ($data['quantity'] > 0) {
-            $this->db->insert('inventory_transactions', [
-                'item_id' => $id,
-                'type' => 'in',
-                'quantity' => $data['quantity'],
-                'notes' => 'Initial stock seeding',
-                'user_id' => Session::userId()
-            ]);
-        }
-
-        Session::flash('success', 'Inventory item added successfully.');
-        $this->redirect('/inventory/' . $id);
+        Session::flash('success', $result['message']);
+        $this->redirect('/inventory/' . $result['id']);
     }
 
     public function show(string $id): void
     {
-        $item = $this->db->fetch(
-            "SELECT i.*, ic.name as category_name
-             FROM inventory_items i
-             LEFT JOIN inventory_categories ic ON i.category_id = ic.id
-             WHERE i.id = ? AND i.deleted_at IS NULL",
-            [(int)$id]
-        );
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
-        if (!$item) $this->abort(404);
-
-        $transactions = $this->db->fetchAll(
-            "SELECT it.*, CONCAT(u.first_name, ' ', u.last_name) as user_name
-             FROM inventory_transactions it
-             JOIN users u ON it.user_id = u.id
-             WHERE it.item_id = ? ORDER BY it.created_at DESC",
-            [(int)$id]
-        );
-
-        $this->view('inventory/show', [
-            'pageTitle' => 'Item: ' . $item->sku,
-            'item' => $item,
-            'transactions' => $transactions
-        ]);
+        $bundle['pageTitle'] = 'Item: ' . $bundle['item']->sku;
+        $this->view('inventory/show', $bundle);
     }
 
     public function edit(string $id): void
     {
-        $item = $this->db->fetch("SELECT * FROM inventory_items WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$item) $this->abort(404);
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
-        $categories = $this->db->fetchAll("SELECT * FROM inventory_categories WHERE deleted_at IS NULL ORDER BY name");
         $this->view('inventory/edit', [
-            'pageTitle' => 'Edit Item ' . $item->sku,
-            'item' => $item,
-            'categories' => $categories
-        ]);
+            'pageTitle' => 'Edit Item ' . $bundle['item']->sku,
+            'item' => $bundle['item'],
+        ] + $this->service->formData());
     }
 
     public function update(string $id): void
     {
-        $item = $this->db->fetch("SELECT * FROM inventory_items WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$item) $this->abort(404);
-
-        $v = new Validator($_POST);
-        $v->required('name')->required('sku')->required('reorder_level');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
+        $result = $this->service->update((int)$id, $_POST);
+        if (!$result['success']) {
+            Session::flash('error', $result['message']);
             $this->redirect('/inventory/' . $id . '/edit');
         }
 
-        // Verify SKU uniqueness excluding self
-        $exists = $this->db->fetch("SELECT id FROM inventory_items WHERE sku = ? AND id != ? AND deleted_at IS NULL", [trim($_POST['sku']), (int)$id]);
-        if ($exists) {
-            Session::flash('error', 'SKU already registered to another item.');
-            $this->redirect('/inventory/' . $id . '/edit');
-        }
-
-        $data = [
-            'name' => trim($_POST['name']),
-            'sku' => trim($_POST['sku']),
-            'category_id' => $_POST['category_id'] ?: null,
-            'description' => trim($_POST['description'] ?? ''),
-            'unit' => trim($_POST['unit'] ?? 'pcs'),
-            'min_quantity' => (int)($_POST['min_quantity'] ?? 0),
-            'max_quantity' => (int)($_POST['max_quantity'] ?? 0),
-            'reorder_level' => (int)$_POST['reorder_level'],
-            'unit_cost' => $_POST['unit_cost'] ?: null,
-            'location' => trim($_POST['location'] ?? ''),
-            'supplier' => trim($_POST['supplier'] ?? ''),
-        ];
-
-        $this->db->update('inventory_items', $data, 'id = ?', [(int)$id]);
-
-        Session::flash('success', 'Inventory item details updated.');
+        Session::flash('success', $result['message']);
         $this->redirect('/inventory/' . $id);
     }
 
     public function addTransaction(string $id): void
     {
-        $item = $this->db->fetch("SELECT * FROM inventory_items WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$item) $this->abort(404);
-
-        $v = new Validator($_POST);
-        $v->required('type')->required('quantity');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
-            $this->redirect('/inventory/' . $id);
-        }
-
-        $type = $_POST['type']; // in, out, transfer, adjustment, return
-        $qty = (int)$_POST['quantity'];
-        $notes = trim($_POST['notes'] ?? '');
-
-        if ($qty <= 0) {
-            Session::flash('error', 'Quantity must be a positive integer.');
-            $this->redirect('/inventory/' . $id);
-        }
-
-        $newQty = $item->quantity;
-        if ($type === 'in' || $type === 'return') {
-            $newQty += $qty;
-        } elseif ($type === 'out' || $type === 'transfer' || $type === 'adjustment') {
-            if ($qty > $item->quantity) {
-                Session::flash('error', 'Insufficient stock level. Cannot subtract more than available.');
-                $this->redirect('/inventory/' . $id);
-            }
-            $newQty -= $qty;
-        }
-
-        $this->db->beginTransaction();
-        try {
-            // Update quantity
-            $this->db->update('inventory_items', ['quantity' => $newQty], 'id = ?', [$item->id]);
-
-            // Insert transaction
-            $this->db->insert('inventory_transactions', [
-                'item_id' => $item->id,
-                'type' => $type,
-                'quantity' => $qty,
-                'notes' => $notes,
-                'user_id' => Session::userId()
-            ]);
-
-            $this->db->commit();
-        } catch (\Exception $e) {
-            $this->db->rollback();
-            Session::flash('error', 'Failed to update transaction: ' . $e->getMessage());
-            $this->redirect('/inventory/' . $id);
-        }
-
-        // Trigger stock alert notification if below reorder level
-        if ($newQty <= $item->reorder_level) {
-            try {
-                // Notify Super admin / managers
-                $managers = $this->db->fetchAll(
-                    "SELECT u.id FROM users u 
-                     JOIN user_roles ur ON u.id = ur.user_id 
-                     JOIN roles r ON ur.role_id = r.id 
-                     WHERE r.slug IN ('administrator', 'super_administrator', 'manager')"
-                );
-                foreach ($managers as $m) {
-                    $this->db->insert('notifications', [
-                        'user_id' => $m->id,
-                        'type' => 'low_stock',
-                        'title' => 'Low Stock Alert: ' . $item->sku,
-                        'message' => "Stock level for {$item->name} has dropped to {$newQty} {$item->unit} (min limit: {$item->reorder_level}).",
-                        'link' => '/inventory/' . $item->id
-                    ]);
-                }
-            } catch (\Exception $e) {}
-        }
-
-        Session::flash('success', 'Stock transaction processed.');
+        $result = $this->service->transaction((int)$id, $_POST, (int)Session::userId());
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
         $this->redirect('/inventory/' . $id);
+    }
+
+    public function transactions(): void
+    {
+        $this->view('inventory/transactions', [
+            'pageTitle' => 'Inventory Transactions',
+            'transactions' => $this->service->transactions(),
+        ]);
+    }
+
+    public function reorderAlerts(): void
+    {
+        $this->view('inventory/reorder_alerts', [
+            'pageTitle' => 'Reorder Alerts',
+            'items' => $this->service->reorderAlerts(),
+        ]);
+    }
+
+    public function suppliers(): void
+    {
+        $this->view('inventory/suppliers', [
+            'pageTitle' => 'Supplier Tracking',
+            'suppliers' => $this->service->suppliers(),
+        ]);
+    }
+
+    public function storeSupplier(): void
+    {
+        $result = $this->service->createSupplier($_POST);
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
+        $this->redirect('/inventory/suppliers');
+    }
+
+    public function purchaseRequests(): void
+    {
+        $filters = [
+            'status' => $_GET['status'] ?? '',
+            'item_id' => $_GET['item_id'] ?? '',
+        ];
+        $this->view('inventory/purchase_requests', [
+            'pageTitle' => 'Purchase Requests',
+            'requests' => $this->service->purchaseRequests($filters),
+            'filters' => $filters,
+        ] + $this->service->formData() + ['items' => $this->service->list([])]);
+    }
+
+    public function storePurchaseRequest(): void
+    {
+        $result = $this->service->createPurchaseRequest($_POST, (int)Session::userId());
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
+        $this->redirect('/inventory/purchase-requests');
+    }
+
+    public function updatePurchaseRequestStatus(string $id): void
+    {
+        $result = $this->service->updatePurchaseRequestStatus((int)$id, $_POST['status'] ?? '', (int)Session::userId());
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
+        $this->redirect('/inventory/purchase-requests');
     }
 
     public function dataList(): void
     {
-        $items = $this->db->fetchAll("SELECT id, name, sku, quantity, reorder_level, location FROM inventory_items WHERE deleted_at IS NULL");
-        $this->json(['data' => $items]);
+        $this->apiItems();
+    }
+
+    public function apiDashboard(): void
+    {
+        $this->json($this->service->dashboard());
+    }
+
+    public function apiItems(): void
+    {
+        $this->json(['data' => $this->service->list($this->filters())]);
+    }
+
+    public function apiShow(string $id): void
+    {
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->json(['success' => false, 'message' => 'Inventory item not found.'], 404);
+        }
+        $this->json(['success' => true] + $bundle);
+    }
+
+    public function apiTransactions(): void
+    {
+        $this->json(['data' => $this->service->transactions()]);
+    }
+
+    public function apiReorderAlerts(): void
+    {
+        $this->json(['data' => $this->service->reorderAlerts()]);
+    }
+
+    public function apiSuppliers(): void
+    {
+        $this->json(['data' => $this->service->suppliers()]);
+    }
+
+    public function apiPurchaseRequests(): void
+    {
+        $this->json(['data' => $this->service->purchaseRequests(['status' => $_GET['status'] ?? ''])]);
+    }
+
+    private function filters(): array
+    {
+        return [
+            'category_id' => $_GET['category_id'] ?? '',
+            'supplier_id' => $_GET['supplier_id'] ?? '',
+            'stock' => $_GET['stock'] ?? '',
+            'search' => trim($_GET['search'] ?? ''),
+        ];
     }
 }

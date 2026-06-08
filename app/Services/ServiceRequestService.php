@@ -387,6 +387,11 @@ class ServiceRequestService
         ]);
 
         $this->repo->addTicketHistory($ticketId, $userId, 'created_from_service_request', $request->request_number);
+        try {
+            (new SlaMonitorService())->applySlaToTicket($ticketId);
+        } catch (\Exception $e) {
+            // SLA sync should not block service request fulfillment.
+        }
 
         if (!$this->repo->findFulfillmentTask($requestId)) {
             $this->repo->createFulfillmentTask([

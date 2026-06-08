@@ -16,11 +16,12 @@
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
         <h1>Maintenance Calendar</h1>
-        <p>Interactive calendar view of upcoming and completed preventive maintenance schedules.</p>
+        <p>Calendar view of preventive maintenance, corrective repairs, inspections, and emergency work orders.</p>
     </div>
     <div class="page-actions">
-        <a href="<?= View::url('maintenance') ?>" class="btn btn-outline-primary"><i class="bi bi-list-task me-1"></i>List View</a>
-        <a href="<?= View::url('maintenance/create') ?>" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Schedule Task</a>
+        <a href="<?= View::url('maintenance') ?>" class="btn btn-outline-secondary"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a>
+        <a href="<?= View::url('maintenance/work-orders') ?>" class="btn btn-outline-primary"><i class="bi bi-list-check me-1"></i>Work Orders</a>
+        <a href="<?= View::url('maintenance/create') ?>" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Schedule</a>
     </div>
 </div>
 
@@ -43,7 +44,7 @@
                     center: 'title',
                     right: 'dayGridMonth,timeGridWeek,listMonth'
                 },
-                events: '<?= View::url("maintenance/data/events") ?>',
+                events: '<?= View::url("maintenance/api/calendar/events") ?>',
                 eventClick: function(info) {
                     if (info.event.url) {
                         window.location.href = info.event.url;

@@ -91,22 +91,55 @@
         Swal.fire({ toast: true, position: 'top-end', icon: icon, title: title, showConfirmButton: false, timer: 3000, timerProgressBar: true });
     };
 
-    // ============ NOTIFICATION POLLING ============
+    // ============ NOTIFICATION REALTIME + POLLING ============
+    function updateNotificationBadge(count) {
+        const badge = document.getElementById('notifBadge');
+        if (!badge) return;
+        if (count > 0) {
+            badge.textContent = count > 99 ? '99+' : count;
+            badge.style.display = 'flex';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
     function pollNotifications() {
         const badge = document.getElementById('notifBadge');
         if (!badge) return;
         $.get(window.BASE_URL + '/notifications/unread', function(data) {
-            if (data.count > 0) {
-                badge.textContent = data.count > 99 ? '99+' : data.count;
-                badge.style.display = 'flex';
-            } else {
-                badge.style.display = 'none';
-            }
+            updateNotificationBadge(Number(data.count || 0));
         }).fail(function() {});
     }
-    // Poll every 30s
-    setInterval(pollNotifications, 30000);
+
+    function connectNotificationSocket() {
+        if (!window.SOCKET_IO_URL || !window.AUTH_USER_ID || typeof io === 'undefined') return;
+
+        try {
+            const socket = io(window.SOCKET_IO_URL, {
+                transports: ['websocket', 'polling'],
+                auth: { userId: window.AUTH_USER_ID }
+            });
+
+            socket.on('notification.created', function(payload) {
+                pollNotifications();
+                if (window.showToast && payload && payload.title) {
+                    showToast(payload.severity === 'danger' ? 'error' : 'info', payload.title);
+                }
+            });
+
+            socket.on('notification.read_state_changed', function(payload) {
+                if (payload && typeof payload.count !== 'undefined') updateNotificationBadge(Number(payload.count));
+            });
+
+            socket.on('notification.read_all', function() {
+                updateNotificationBadge(0);
+            });
+        } catch (e) {}
+    }
+
+    setInterval(pollNotifications, window.NOTIFICATION_POLL_INTERVAL || 30000);
     pollNotifications();
+    connectNotificationSocket();
 
     // ============ AUTO-DISMISS ALERTS ============
     document.querySelectorAll('.alert-dismissible').forEach(function(alert) {
@@ -130,4 +163,3 @@
 
 // Base URL for AJAX
 window.BASE_URL = window.BASE_URL || (document.querySelector('meta[name="csrf-token"]')?.closest('head')?.querySelector('title')?.textContent?.includes('HEMS') ? '' : '');
-

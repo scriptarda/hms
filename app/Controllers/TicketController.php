@@ -8,6 +8,7 @@ use App\Helpers\Validator;
 use App\Helpers\Database;
 use App\Repositories\TicketRepository;
 use App\Repositories\UserRepository;
+use App\Services\SlaMonitorService;
 use App\Services\TicketService;
 
 class TicketController extends BaseController
@@ -77,6 +78,11 @@ class TicketController extends BaseController
     {
         $data = ['title'=>$_POST['title'],'description'=>$_POST['description'],'priority'=>$_POST['priority'],'category_id'=>$_POST['category_id']?:null,'department_id'=>$_POST['department_id']?:null,'asset_id'=>$_POST['asset_id']?:null];
         $this->repo->update((int)$id, $data);
+        try {
+            (new SlaMonitorService())->applySlaToTicket((int)$id);
+        } catch (\Exception $e) {
+            // Ticket updates should continue even if SLA metadata cannot be refreshed.
+        }
         $this->repo->addHistory(['ticket_id'=>(int)$id,'user_id'=>Session::userId(),'action'=>'updated']);
         Session::flash('success','Ticket updated.');$this->redirect('/tickets/'.$id);
     }
@@ -94,6 +100,9 @@ class TicketController extends BaseController
     public function addComment(string $id): void
     {
         $this->repo->addComment(['ticket_id'=>(int)$id,'user_id'=>Session::userId(),'comment'=>$_POST['comment'],'is_internal'=>isset($_POST['is_internal'])?1:0]);
+        if (in_array(Session::get('role', 'staff'), ['technician', 'biomedical_engineer', 'manager', 'administrator', 'super_administrator'], true)) {
+            (new SlaMonitorService())->markResponded((int)$id);
+        }
         $this->repo->addHistory(['ticket_id'=>(int)$id,'user_id'=>Session::userId(),'action'=>'commented']);
         Session::flash('success','Comment added.');$this->redirect('/tickets/'.$id);
     }

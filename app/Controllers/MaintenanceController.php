@@ -3,308 +3,256 @@ namespace App\Controllers;
 
 use App\Helpers\BaseController;
 use App\Helpers\Session;
-use App\Helpers\CSRF;
-use App\Helpers\Validator;
-use App\Helpers\Database;
+use App\Helpers\View;
+use App\Services\MaintenanceService;
 
 class MaintenanceController extends BaseController
 {
-    private Database $db;
+    private MaintenanceService $service;
 
     public function __construct()
     {
-        $this->db = Database::getInstance();
+        $this->service = new MaintenanceService();
     }
 
     public function index(): void
     {
-        $status = $_GET['status'] ?? '';
-        $type = $_GET['type'] ?? '';
-        $priority = $_GET['priority'] ?? '';
+        $this->view('maintenance/index', array_merge(
+            ['pageTitle' => 'Maintenance Dashboard'],
+            $this->service->dashboard((int)Session::userId())
+        ));
+    }
 
-        $sql = "SELECT m.*, a.name as asset_name, a.asset_tag,
-                       CONCAT(u.first_name, ' ', u.last_name) as tech_name
-                FROM maintenance_tasks m
-                LEFT JOIN assets a ON m.asset_id = a.id
-                LEFT JOIN users u ON m.assigned_to = u.id
-                WHERE m.deleted_at IS NULL";
-        
-        $params = [];
-        if ($status) { $sql .= " AND m.status = ?"; $params[] = $status; }
-        if ($type) { $sql .= " AND m.type = ?"; $params[] = $type; }
-        if ($priority) { $sql .= " AND m.priority = ?"; $params[] = $priority; }
-
-        $sql .= " ORDER BY m.due_date ASC";
-        $tasks = $this->db->fetchAll($sql, $params);
-
-        $this->view('maintenance/index', [
+    public function workOrders(): void
+    {
+        $this->view('maintenance/work_orders', [
             'pageTitle' => 'Maintenance Work Orders',
-            'tasks' => $tasks,
-            'filters' => ['status' => $status, 'type' => $type, 'priority' => $priority]
+            'tasks' => $this->service->workOrders($this->filters()),
+            'filters' => $this->filters(),
+            'formData' => $this->service->formData(),
         ]);
     }
 
     public function calendar(): void
     {
         $this->view('maintenance/calendar', [
-            'pageTitle' => 'Maintenance Schedule Calendar'
+            'pageTitle' => 'Maintenance Calendar',
+        ]);
+    }
+
+    public function history(): void
+    {
+        $this->view('maintenance/history', [
+            'pageTitle' => 'Maintenance History',
+            'tasks' => $this->service->history($this->filters()),
+            'filters' => $this->filters(),
+            'formData' => $this->service->formData(),
+        ]);
+    }
+
+    public function queue(): void
+    {
+        $filters = [
+            'scope' => $_GET['scope'] ?? 'team',
+            'priority' => $_GET['priority'] ?? '',
+        ];
+
+        $this->view('maintenance/queue', [
+            'pageTitle' => 'Technician Work Queue',
+            'tasks' => $this->service->queue((int)Session::userId(), $filters),
+            'filters' => $filters,
         ]);
     }
 
     public function create(): void
     {
-        $assets = $this->db->fetchAll("SELECT id, asset_tag, name FROM assets WHERE deleted_at IS NULL ORDER BY asset_tag");
-        $technicians = $this->db->fetchAll(
-            "SELECT u.id, u.first_name, u.last_name FROM users u
-             JOIN user_roles ur ON u.id = ur.user_id
-             JOIN roles r ON ur.role_id = r.id
-             WHERE r.slug IN ('technician', 'biomedical_engineer', 'administrator', 'super_administrator')
-             AND u.status = 'active' AND u.deleted_at IS NULL"
-        );
-        $departments = $this->db->fetchAll("SELECT id, name FROM departments WHERE deleted_at IS NULL ORDER BY name");
-
-        $this->view('maintenance/create', [
-            'pageTitle' => 'Schedule Maintenance',
-            'assets' => $assets,
-            'technicians' => $technicians,
-            'departments' => $departments
-        ]);
+        $this->view('maintenance/create', array_merge(
+            ['pageTitle' => 'Schedule Maintenance'],
+            $this->service->formData()
+        ));
     }
 
     public function store(): void
     {
-        $v = new Validator($_POST);
-        $v->required('title')->required('type')->required('priority')->required('scheduled_date')->required('due_date');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
+        $result = $this->service->create($_POST, (int)Session::userId());
+        if (!$result['success']) {
+            Session::flash('error', $result['message']);
             $this->redirect('/maintenance/create');
         }
 
-        $data = [
-            'title' => trim($_POST['title']),
-            'description' => trim($_POST['description'] ?? ''),
-            'asset_id' => $_POST['asset_id'] ?: null,
-            'type' => $_POST['type'],
-            'priority' => $_POST['priority'],
-            'status' => 'scheduled',
-            'assigned_to' => $_POST['assigned_to'] ?: null,
-            'department_id' => $_POST['department_id'] ?: null,
-            'scheduled_date' => $_POST['scheduled_date'],
-            'due_date' => $_POST['due_date'],
-            'estimated_hours' => $_POST['estimated_hours'] ?: null,
-            'notes' => trim($_POST['notes'] ?? ''),
-        ];
-
-        $id = $this->db->insert('maintenance_tasks', $data);
-
-        // Add log
-        $this->db->insert('maintenance_logs', [
-            'task_id' => $id,
-            'user_id' => Session::userId(),
-            'action' => 'scheduled',
-            'notes' => 'Work order scheduled'
-        ]);
-
-        if ($data['asset_id']) {
-            $this->db->insert('asset_history', [
-                'asset_id' => $data['asset_id'],
-                'user_id' => Session::userId(),
-                'action' => 'maintenance_scheduled',
-                'description' => 'Preventive maintenance scheduled: ' . $data['title']
-            ]);
-        }
-
-        Session::flash('success', 'Maintenance scheduled successfully.');
-        $this->redirect('/maintenance/' . $id);
+        Session::flash('success', $result['message']);
+        $this->redirect('/maintenance/' . $result['id']);
     }
 
     public function show(string $id): void
     {
-        $task = $this->db->fetch(
-            "SELECT m.*, a.name as asset_name, a.asset_tag, d.name as dept_name,
-                    CONCAT(u.first_name, ' ', u.last_name) as tech_name, u.email as tech_email
-             FROM maintenance_tasks m
-             LEFT JOIN assets a ON m.asset_id = a.id
-             LEFT JOIN departments d ON m.department_id = d.id
-             LEFT JOIN users u ON m.assigned_to = u.id
-             WHERE m.id = ? AND m.deleted_at IS NULL",
-            [(int)$id]
-        );
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
-        if (!$task) $this->abort(404);
-
-        $logs = $this->db->fetchAll(
-            "SELECT ml.*, CONCAT(u.first_name, ' ', u.last_name) as user_name
-             FROM maintenance_logs ml
-             JOIN users u ON ml.user_id = u.id
-             WHERE ml.task_id = ? ORDER BY ml.created_at DESC",
-            [(int)$id]
-        );
-
-        $this->view('maintenance/show', [
-            'pageTitle' => 'Work Order #' . $task->id,
-            'task' => $task,
-            'logs' => $logs
-        ]);
+        $bundle['pageTitle'] = 'Work Order ' . ($bundle['task']->wo_number ?? ('WO-' . $bundle['task']->id));
+        $this->view('maintenance/show', $bundle);
     }
 
     public function edit(string $id): void
     {
-        $task = $this->db->fetch("SELECT * FROM maintenance_tasks WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$task) $this->abort(404);
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->abort(404);
+        }
 
-        $assets = $this->db->fetchAll("SELECT id, asset_tag, name FROM assets WHERE deleted_at IS NULL ORDER BY asset_tag");
-        $technicians = $this->db->fetchAll(
-            "SELECT u.id, u.first_name, u.last_name FROM users u
-             JOIN user_roles ur ON u.id = ur.user_id
-             JOIN roles r ON ur.role_id = r.id
-             WHERE r.slug IN ('technician', 'biomedical_engineer', 'administrator', 'super_administrator')
-             AND u.status = 'active' AND u.deleted_at IS NULL"
-        );
-        $departments = $this->db->fetchAll("SELECT id, name FROM departments WHERE deleted_at IS NULL ORDER BY name");
-
-        $this->view('maintenance/edit', [
-            'pageTitle' => 'Edit Maintenance Work Order',
-            'task' => $task,
-            'assets' => $assets,
-            'technicians' => $technicians,
-            'departments' => $departments
-        ]);
+        $this->view('maintenance/edit', array_merge(
+            [
+                'pageTitle' => 'Edit Work Order',
+                'task' => $bundle['task'],
+                'checklist' => $bundle['checklist'],
+            ],
+            $this->service->formData()
+        ));
     }
 
     public function update(string $id): void
     {
-        $task = $this->db->fetch("SELECT * FROM maintenance_tasks WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$task) $this->abort(404);
-
-        $v = new Validator($_POST);
-        $v->required('title')->required('type')->required('priority')->required('scheduled_date')->required('due_date')->required('status');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
+        $result = $this->service->update((int)$id, $_POST, (int)Session::userId());
+        if (!$result['success']) {
+            Session::flash('error', $result['message']);
             $this->redirect('/maintenance/' . $id . '/edit');
         }
 
-        $data = [
-            'title' => trim($_POST['title']),
-            'description' => trim($_POST['description'] ?? ''),
-            'asset_id' => $_POST['asset_id'] ?: null,
-            'type' => $_POST['type'],
-            'priority' => $_POST['priority'],
-            'status' => $_POST['status'],
-            'assigned_to' => $_POST['assigned_to'] ?: null,
-            'department_id' => $_POST['department_id'] ?: null,
-            'scheduled_date' => $_POST['scheduled_date'],
-            'due_date' => $_POST['due_date'],
-            'estimated_hours' => $_POST['estimated_hours'] ?: null,
-            'notes' => trim($_POST['notes'] ?? ''),
-        ];
+        Session::flash('success', $result['message']);
+        $this->redirect('/maintenance/' . $id);
+    }
 
-        $this->db->update('maintenance_tasks', $data, 'id = ?', [(int)$id]);
-
-        $this->db->insert('maintenance_logs', [
-            'task_id' => (int)$id,
-            'user_id' => Session::userId(),
-            'action' => 'updated',
-            'notes' => 'Work order parameters updated'
-        ]);
-
-        Session::flash('success', 'Maintenance details updated.');
+    public function start(string $id): void
+    {
+        $result = $this->service->start((int)$id, (int)Session::userId(), trim($_POST['notes'] ?? ''));
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
         $this->redirect('/maintenance/' . $id);
     }
 
     public function complete(string $id): void
     {
-        $task = $this->db->fetch("SELECT * FROM maintenance_tasks WHERE id = ? AND deleted_at IS NULL", [(int)$id]);
-        if (!$task) $this->abort(404);
+        $result = $this->service->complete((int)$id, $_POST, (int)Session::userId());
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
+        $this->redirect('/maintenance/' . $id);
+    }
 
-        $v = new Validator($_POST);
-        $v->required('actual_hours')->required('notes');
-        if ($v->fails()) {
-            Session::flash('error', $v->firstError());
-            $this->redirect('/maintenance/' . $id);
-        }
-
-        $notes = trim($_POST['notes']);
-        $parts = trim($_POST['parts_used'] ?? '');
-        $cost = $_POST['cost'] ?: 0.00;
-        $hours = (float)$_POST['actual_hours'];
-
-        $this->db->update('maintenance_tasks', [
-            'status' => 'completed',
-            'completed_date' => date('Y-m-d'),
-            'actual_hours' => $hours,
-            'cost' => $cost,
-            'notes' => $notes
-        ], 'id = ?', [(int)$id]);
-
-        // Insert maintenance log
-        $this->db->insert('maintenance_logs', [
-            'task_id' => (int)$id,
-            'user_id' => Session::userId(),
-            'action' => 'completed',
-            'notes' => $notes,
-            'parts_used' => $parts
-        ]);
-
-        if ($task->asset_id) {
-            $this->db->update('assets', [
-                'last_maintenance_date' => date('Y-m-d'),
-                'next_maintenance_date' => date('Y-m-d', strtotime('+3 months')), // Schedule next default
-                'status' => 'active' // restore asset status to active
-            ], 'id = ?', [$task->asset_id]);
-
-            $this->db->insert('asset_history', [
-                'asset_id' => $task->asset_id,
-                'user_id' => Session::userId(),
-                'action' => 'maintenance_completed',
-                'description' => 'Completed task: ' . $task->title . '. Cost: $' . number_format($cost, 2)
-            ]);
-        }
-
-        Session::flash('success', 'Work order marked as completed.');
+    public function cancel(string $id): void
+    {
+        $result = $this->service->cancel((int)$id, (int)Session::userId(), trim($_POST['reason'] ?? ''));
+        Session::flash($result['success'] ? 'success' : 'error', $result['message']);
         $this->redirect('/maintenance/' . $id);
     }
 
     public function events(): void
     {
-        $start = $_GET['start'] ?? '';
-        $end = $_GET['end'] ?? '';
+        $this->apiCalendarEvents();
+    }
 
-        $sql = "SELECT id, title, scheduled_date as start, status, priority, type
-                FROM maintenance_tasks
-                WHERE deleted_at IS NULL";
-        $params = [];
+    public function apiDashboard(): void
+    {
+        $this->json($this->service->dashboard((int)Session::userId()));
+    }
 
-        if ($start && $end) {
-            $sql .= " AND scheduled_date BETWEEN ? AND ?";
-            $params[] = date('Y-m-d', strtotime($start));
-            $params[] = date('Y-m-d', strtotime($end));
+    public function apiWorkOrders(): void
+    {
+        $this->json(['data' => $this->service->workOrders($this->filters())]);
+    }
+
+    public function apiShow(string $id): void
+    {
+        $bundle = $this->service->detail((int)$id);
+        if (!$bundle) {
+            $this->json(['success' => false, 'message' => 'Work order not found.'], 404);
         }
 
-        $tasks = $this->db->fetchAll($sql, $params);
+        $this->json(['success' => true] + $bundle);
+    }
 
-        $events = [];
-        foreach ($tasks as $t) {
-            $color = '#6366f1'; // Default indigo
-            if ($t->status === 'completed') {
-                $color = '#10b981'; // Green
-            } elseif ($t->priority === 'critical') {
-                $color = '#ef4444'; // Red
-            } elseif ($t->priority === 'high') {
-                $color = '#f59e0b'; // Amber
-            }
+    public function apiStore(): void
+    {
+        $result = $this->service->create($_POST, (int)Session::userId());
+        $this->json($result, $result['success'] ? 201 : 422);
+    }
 
-            $events[] = [
-                'id' => $t->id,
-                'title' => '[' . strtoupper($t->type) . '] ' . $t->title,
-                'start' => $t->start,
-                'url' => View::url('maintenance/' . $t->id),
-                'backgroundColor' => $color,
-                'borderColor' => $color,
-                'allDay' => true
-            ];
-        }
+    public function apiUpdate(string $id): void
+    {
+        $result = $this->service->update((int)$id, $_POST, (int)Session::userId());
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
 
-        $this->json($events);
+    public function apiStart(string $id): void
+    {
+        $result = $this->service->start((int)$id, (int)Session::userId(), trim($_POST['notes'] ?? ''));
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    public function apiComplete(string $id): void
+    {
+        $result = $this->service->complete((int)$id, $_POST, (int)Session::userId());
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    public function apiCancel(string $id): void
+    {
+        $result = $this->service->cancel((int)$id, (int)Session::userId(), trim($_POST['reason'] ?? ''));
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    public function apiCalendarEvents(): void
+    {
+        $this->json($this->service->calendarEvents(
+            $_GET['start'] ?? null,
+            $_GET['end'] ?? null,
+            rtrim(View::url(''), '/')
+        ));
+    }
+
+    public function apiHistory(): void
+    {
+        $this->json(['data' => $this->service->history($this->filters())]);
+    }
+
+    public function apiQueue(): void
+    {
+        $this->json(['data' => $this->service->queue((int)Session::userId(), [
+            'scope' => $_GET['scope'] ?? 'team',
+            'priority' => $_GET['priority'] ?? '',
+        ])]);
+    }
+
+    public function apiSchedules(): void
+    {
+        $this->json(['data' => $this->service->schedules([
+            'active' => $_GET['active'] ?? '',
+            'due_within_days' => $_GET['due_within_days'] ?? '',
+        ])]);
+    }
+
+    public function apiStoreSchedule(): void
+    {
+        $result = $this->service->createSchedule($_POST, (int)Session::userId());
+        $this->json($result, $result['success'] ? 201 : 422);
+    }
+
+    public function apiGenerateSchedule(string $id): void
+    {
+        $result = $this->service->generateFromSchedule((int)$id, (int)Session::userId());
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
+    private function filters(): array
+    {
+        return [
+            'status' => $_GET['status'] ?? '',
+            'type' => $_GET['type'] ?? '',
+            'priority' => $_GET['priority'] ?? '',
+            'assigned_to' => $_GET['assigned_to'] ?? '',
+            'asset_id' => $_GET['asset_id'] ?? '',
+            'date_from' => $_GET['date_from'] ?? '',
+            'date_to' => $_GET['date_to'] ?? '',
+            'search' => trim($_GET['search'] ?? ''),
+        ];
     }
 }

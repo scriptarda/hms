@@ -1,139 +1,124 @@
-<?php use App\Helpers\View; View::startSection('content'); ?>
-<div class="page-header">
-    <h1>Reports & Analytics Center</h1>
-    <p>Generate, visualize, and export spreadsheets covering service desk performance, clinical engineering assets, and stock valuations.</p>
+<?php use App\Helpers\View; use App\Helpers\CSRF; View::startSection('content');
+$routeFor = static fn(string $type): string => $type === 'user_activity' ? 'user-activity' : $type;
+?>
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+        <h1>Enterprise Reports</h1>
+        <p>Operational reporting with filters, KPI cards, charts, exports, and scheduled delivery.</p>
+    </div>
+    <div class="page-actions">
+        <a href="<?= View::url('reports/user-activity') ?>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-person-lines-fill me-1"></i>User Activity</a>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="kpi-card"><div class="kpi-header"><span class="kpi-label">Tickets</span><div class="kpi-icon blue"><i class="bi bi-ticket-detailed"></i></div></div><div class="kpi-value"><?= (int)$stats['tickets_count'] ?></div></div></div>
+    <div class="col-md-3"><div class="kpi-card"><div class="kpi-header"><span class="kpi-label">Assets</span><div class="kpi-icon green"><i class="bi bi-hdd-stack"></i></div></div><div class="kpi-value"><?= (int)$stats['assets_count'] ?></div></div></div>
+    <div class="col-md-3"><div class="kpi-card"><div class="kpi-header"><span class="kpi-label">Maintenance Cost</span><div class="kpi-icon yellow"><i class="bi bi-cash-stack"></i></div></div><div class="kpi-value" style="font-size:1.5rem">$<?= number_format((float)$stats['maintenance_cost'], 0) ?></div></div></div>
+    <div class="col-md-3"><div class="kpi-card"><div class="kpi-header"><span class="kpi-label">Scheduled</span><div class="kpi-icon blue"><i class="bi bi-calendar2-week"></i></div></div><div class="kpi-value"><?= (int)$stats['scheduled_reports'] ?></div></div></div>
 </div>
 
 <div class="row g-4 mb-4">
-    <!-- Card: Ticket metrics -->
-    <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0">
-            <div class="card-body p-4 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex align-items-center gap-2 mb-3">
-                        <i class="bi bi-exclamation-triangle text-primary fs-3"></i>
-                        <h5 class="fw-bold mb-0">Incidents</h5>
+    <?php foreach ($reportTypes as $type => $meta): ?>
+        <div class="col-md-6 col-xl-4">
+            <div class="card h-100 shadow-sm border-0">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <i class="bi <?= htmlspecialchars($meta['icon']) ?> text-<?= htmlspecialchars($meta['color']) ?> fs-3"></i>
+                            <h5 class="fw-bold mb-0"><?= htmlspecialchars($meta['label']) ?></h5>
+                        </div>
+                        <p class="text-muted small mb-0">Filtered KPI cards, charts, details, PDF, Excel, CSV, and scheduling.</p>
                     </div>
-                    <p class="text-muted small">Overview of ticket queues, status counts, and priority distributions.</p>
-                </div>
-                <div class="mt-4">
-                    <span class="d-block mb-3 fs-5 fw-bold"><?= $stats['tickets_count'] ?> Total Tickets</span>
-                    <a href="<?= View::url('reports/tickets') ?>" class="btn btn-outline-primary btn-sm w-100">Open Report</a>
+                    <div class="d-flex gap-2 mt-4">
+                        <a href="<?= View::url('reports/' . $routeFor($type)) ?>" class="btn btn-sm btn-primary flex-fill">Open</a>
+                        <a href="<?= View::url('reports/export/' . $type . '?format=pdf') ?>" class="btn btn-sm btn-outline-danger"><i class="bi bi-file-earmark-pdf"></i></a>
+                        <a href="<?= View::url('reports/export/' . $type . '?format=excel') ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-file-earmark-excel"></i></a>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-
-    <!-- Card: Asset Metrics -->
-    <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0">
-            <div class="card-body p-4 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex align-items-center gap-2 mb-3">
-                        <i class="bi bi-hdd-stack text-success fs-3"></i>
-                        <h5 class="fw-bold mb-0">Assets</h5>
-                    </div>
-                    <p class="text-muted small">Asset category metrics, warranty tracking, and lifecycle status summaries.</p>
-                </div>
-                <div class="mt-4">
-                    <span class="d-block mb-3 fs-5 fw-bold"><?= $stats['assets_count'] ?> Registered Assets</span>
-                    <a href="<?= View::url('reports/assets') ?>" class="btn btn-outline-success btn-sm w-100">Open Report</a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Card: Maintenance Cost -->
-    <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0">
-            <div class="card-body p-4 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex align-items-center gap-2 mb-3">
-                        <i class="bi bi-wrench-adjustable text-warning fs-3"></i>
-                        <h5 class="fw-bold mb-0">Maintenance</h5>
-                    </div>
-                    <p class="text-muted small">Preventive scheduling compliance, corrective hours, and operational cost logs.</p>
-                </div>
-                <div class="mt-4">
-                    <span class="d-block mb-3 fs-5 fw-bold">$<?= number_format($stats['maintenance_cost'], 2) ?> Spent</span>
-                    <a href="<?= View::url('reports/maintenance') ?>" class="btn btn-outline-warning btn-sm w-100">Open Report</a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Card: Inventory Value -->
-    <div class="col-md-6 col-lg-3">
-        <div class="card h-100 shadow-sm border-0">
-            <div class="card-body p-4 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex align-items-center gap-2 mb-3">
-                        <i class="bi bi-box-seam text-purple fs-3" style="color: #a855f7;"></i>
-                        <h5 class="fw-bold mb-0">Inventory</h5>
-                    </div>
-                    <p class="text-muted small">Current stock valuation, reorder alert list, and supplier performance.</p>
-                </div>
-                <div class="mt-4">
-                    <span class="d-block mb-3 fs-5 fw-bold">$<?= number_format($stats['inventory_value'], 2) ?> Stock Value</span>
-                    <a href="<?= View::url('reports/inventory') ?>" class="btn btn-sm w-100 text-white" style="background:#a855f7;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">Open Report</a>
-                </div>
-            </div>
-        </div>
-    </div>
+    <?php endforeach; ?>
 </div>
 
-<!-- SLA Performance Quick Link Card -->
-<div class="card shadow-sm border-0 mb-4 bg-light border-start border-primary border-4">
-    <div class="card-body p-4 d-flex justify-content-between align-items-center flex-wrap gap-3">
-        <div>
-            <h5 class="fw-bold mb-1"><i class="bi bi-stopwatch-fill text-primary me-2"></i>Service SLA Compliance Performance</h5>
-            <p class="text-muted small mb-0">Monitor response & resolution time targets to ensure hospital operation standards are met.</p>
+<div class="row g-4">
+    <div class="col-xl-5">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-header">Schedule Report</div>
+            <div class="card-body">
+                <form action="<?= View::url('reports/schedules/store') ?>" method="POST" class="row g-3">
+                    <?= CSRF::field() ?>
+                    <div class="col-12">
+                        <label class="form-label small fw-semibold">Name</label>
+                        <input type="text" name="name" class="form-control" placeholder="Weekly SLA Performance">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Report</label>
+                        <select name="report_type" class="form-select">
+                            <?php foreach ($reportTypes as $type => $meta): ?>
+                                <option value="<?= htmlspecialchars($type) ?>"><?= htmlspecialchars($meta['label']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Format</label>
+                        <select name="format" class="form-select">
+                            <option value="pdf">PDF</option>
+                            <option value="excel">Excel</option>
+                            <option value="csv">CSV</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Frequency</label>
+                        <select name="frequency" class="form-select">
+                            <option value="daily">Daily</option>
+                            <option value="weekly" selected>Weekly</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Recipients</label>
+                        <input type="text" name="recipients" class="form-control" placeholder="ops@example.org">
+                    </div>
+                    <div class="col-12 d-flex justify-content-between align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="is_active" id="scheduleActive" checked>
+                            <label class="form-check-label small" for="scheduleActive">Active</label>
+                        </div>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-calendar-plus me-1"></i>Schedule</button>
+                    </div>
+                </form>
+            </div>
         </div>
-        <a href="<?= View::url('reports/sla') ?>" class="btn btn-primary">Open SLA Dashboard</a>
     </div>
-</div>
 
-<!-- Bulk Export Card -->
-<div class="card shadow-sm border-0">
-    <div class="card-header bg-transparent py-3">
-        <h5 class="card-title fw-bold mb-0"><i class="bi bi-download me-2 text-primary"></i>Bulk Data Export Center</h5>
-    </div>
-    <div class="card-body">
-        <div class="row g-3">
-            <div class="col-md-6 col-lg-3">
-                <div class="p-3 border rounded text-center">
-                    <h6 class="fw-bold mb-2">Incidents Database</h6>
-                    <div class="d-flex gap-2 justify-content-center">
-                        <a href="<?= View::url('reports/export/tickets?format=csv') ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
-                        <a href="<?= View::url('reports/export/tickets?format=excel') ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-6 col-lg-3">
-                <div class="p-3 border rounded text-center">
-                    <h6 class="fw-bold mb-2">Asset Registry</h6>
-                    <div class="d-flex gap-2 justify-content-center">
-                        <a href="<?= View::url('reports/export/assets?format=csv') ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
-                        <a href="<?= View::url('reports/export/assets?format=excel') ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-6 col-lg-3">
-                <div class="p-3 border rounded text-center">
-                    <h6 class="fw-bold mb-2">Maintenance Tasks</h6>
-                    <div class="d-flex gap-2 justify-content-center">
-                        <a href="<?= View::url('reports/export/maintenance?format=csv') ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
-                        <a href="<?= View::url('reports/export/maintenance?format=excel') ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-6 col-lg-3">
-                <div class="p-3 border rounded text-center">
-                    <h6 class="fw-bold mb-2">Inventory Levels</h6>
-                    <div class="d-flex gap-2 justify-content-center">
-                        <a href="<?= View::url('reports/export/inventory?format=csv') ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
-                        <a href="<?= View::url('reports/export/inventory?format=excel') ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
-                    </div>
+    <div class="col-xl-7">
+        <div class="card shadow-sm border-0">
+            <div class="card-header">Scheduled Reports</div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead><tr><th class="ps-4">Name</th><th>Report</th><th>Frequency</th><th>Next Run</th><th>Status</th><th></th></tr></thead>
+                        <tbody>
+                        <?php if (empty($schedules)): ?>
+                            <tr><td colspan="6" class="text-center text-muted py-4">No scheduled reports yet.</td></tr>
+                        <?php else: foreach ($schedules as $schedule): ?>
+                            <tr>
+                                <td class="ps-4 fw-semibold"><?= htmlspecialchars($schedule->name) ?></td>
+                                <td><?= htmlspecialchars($reportTypes[$schedule->report_type]['label'] ?? $schedule->report_type) ?></td>
+                                <td><?= htmlspecialchars(ucfirst($schedule->frequency)) ?> · <?= strtoupper($schedule->format) ?></td>
+                                <td><small><?= View::date($schedule->next_run_at, 'M d, Y H:i') ?></small></td>
+                                <td><?= View::statusBadge((int)$schedule->is_active ? 'active' : 'inactive') ?></td>
+                                <td class="text-end pe-4">
+                                    <form action="<?= View::url('reports/schedules/' . $schedule->id . '/toggle') ?>" method="POST">
+                                        <?= CSRF::field() ?>
+                                        <button class="btn btn-sm btn-outline-secondary" type="submit"><?= (int)$schedule->is_active ? 'Pause' : 'Resume' ?></button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; endif; ?>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>

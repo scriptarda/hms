@@ -207,13 +207,7 @@ class ServiceRequestRepository
 
     public function notify(int $userId, string $type, string $title, string $message, string $link): int
     {
-        return $this->db->insert('notifications', [
-            'user_id' => $userId,
-            'type' => $type,
-            'title' => $title,
-            'message' => $message,
-            'link' => $link,
-        ]);
+        return (new \App\Services\NotificationService())->send($userId, $type, $title, $message, $link);
     }
 
     public function resolveApprover(?int $departmentId, string $approvalMode): ?int

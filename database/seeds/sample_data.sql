@@ -153,10 +153,18 @@ INSERT INTO tickets (ticket_number, title, description, category_id, priority, s
 
 -- SLA Rules
 INSERT INTO sla_rules (name, priority, response_time, resolution_time, escalation_time, is_active) VALUES
-('Critical SLA', 'critical', 15, 60, 30, 1),
+('Critical SLA', 'critical', 15, 120, 30, 1),
 ('High SLA', 'high', 30, 240, 120, 1),
 ('Medium SLA', 'medium', 60, 480, 240, 1),
 ('Low SLA', 'low', 120, 1440, 720, 1);
+
+UPDATE tickets t
+JOIN sla_rules s ON s.priority = t.priority AND s.is_active = 1
+SET t.sla_rule_id = s.id,
+    t.response_due_at = DATE_ADD(t.created_at, INTERVAL s.response_time MINUTE),
+    t.resolution_due_at = COALESCE(t.sla_due_at, DATE_ADD(t.created_at, INTERVAL s.resolution_time MINUTE)),
+    t.response_sla_status = IF(t.status IN ('assigned','in_progress'), 'on_track', t.response_sla_status),
+    t.responded_at = IF(t.status IN ('assigned','in_progress'), DATE_ADD(t.created_at, INTERVAL 10 MINUTE), t.responded_at);
 
 -- Inventory Categories
 INSERT INTO inventory_categories (name, code, description) VALUES
@@ -165,13 +173,36 @@ INSERT INTO inventory_categories (name, code, description) VALUES
 ('Tools', 'TL', 'Maintenance tools'),
 ('Cables & Connectors', 'CC', 'Cables and connectors');
 
+-- Inventory Suppliers
+INSERT INTO inventory_suppliers (name, code, contact_name, email, phone, lead_time_days, payment_terms, rating, is_active, notes) VALUES
+('Siemens Parts Direct', 'SUP-SIEMENS', 'Laura Berg', 'parts@siemens-health.example', '+1-555-0101', 14, 'Net 30', 4.80, 1, 'Preferred supplier for imaging parts'),
+('Hamilton Medical Parts', 'SUP-HAMILTON', 'Victor Lane', 'orders@hamilton.example', '+1-555-0102', 10, 'Net 30', 4.70, 1, 'Ventilator parts and sensors'),
+('Philips Supply Chain', 'SUP-PHILIPS', 'Nadia Cole', 'support@philips.example', '+1-555-0103', 12, 'Net 45', 4.50, 1, 'Patient monitor accessories'),
+('Medical Supplies Inc', 'SUP-MEDSUP', 'Rita Khan', 'sales@medsup.example', '+1-555-0104', 5, 'Net 15', 4.20, 1, 'Consumables and tubing'),
+('Cable Wholesale', 'SUP-CABLE', 'Chris Young', 'orders@cablewholesale.example', '+1-555-0105', 3, 'Prepaid', 4.10, 1, 'Network and low-voltage supplies');
+
 -- Inventory Items
-INSERT INTO inventory_items (name, sku, category_id, unit, quantity, min_quantity, reorder_level, unit_cost, location, supplier) VALUES
-('MRI Cooling Fluid (1L)', 'SP-MRI-CF-1L', 1, 'liters', 25, 5, 10, 150.00, 'Warehouse A-1', 'Siemens Parts Direct'),
-('Ventilator O2 Sensor', 'SP-VNT-O2S', 1, 'pcs', 12, 3, 5, 89.50, 'Warehouse A-2', 'Hamilton Medical Parts'),
-('Patient Monitor Cable Set', 'SP-MON-CBS', 1, 'sets', 8, 2, 4, 45.00, 'Warehouse B-1', 'Philips Supply Chain'),
-('IV Tubing Set', 'CON-IV-TS', 2, 'pcs', 500, 100, 200, 3.50, 'Warehouse C-1', 'Medical Supplies Inc'),
-('Network Cable Cat6 (3m)', 'CC-NET-C6-3M', 4, 'pcs', 50, 10, 20, 5.00, 'IT Storage', 'Cable Wholesale');
+INSERT INTO inventory_items (name, sku, category_id, unit, quantity, min_quantity, reorder_level, reorder_quantity, unit_cost, location, supplier_id, supplier) VALUES
+('MRI Cooling Fluid (1L)', 'SP-MRI-CF-1L', 1, 'liters', 25, 5, 10, 20, 150.00, 'Warehouse A-1', 1, 'Siemens Parts Direct'),
+('Ventilator O2 Sensor', 'SP-VNT-O2S', 1, 'pcs', 4, 3, 5, 10, 89.50, 'Warehouse A-2', 2, 'Hamilton Medical Parts'),
+('Patient Monitor Cable Set', 'SP-MON-CBS', 1, 'sets', 8, 2, 4, 8, 45.00, 'Warehouse B-1', 3, 'Philips Supply Chain'),
+('IV Tubing Set', 'CON-IV-TS', 2, 'pcs', 150, 100, 200, 300, 3.50, 'Warehouse C-1', 4, 'Medical Supplies Inc'),
+('Network Cable Cat6 (3m)', 'CC-NET-C6-3M', 4, 'pcs', 50, 10, 20, 40, 5.00, 'IT Storage', 5, 'Cable Wholesale');
+
+-- Inventory Purchase Requests
+INSERT INTO inventory_purchase_requests (request_number, item_id, supplier_id, requested_by, status, quantity, unit_cost, total_cost, needed_by, submitted_at, notes) VALUES
+('PR-2606-07001', 2, 2, 3, 'submitted', 10, 89.50, 895.00, DATE_ADD(CURDATE(), INTERVAL 7 DAY), NOW(), 'Ventilator O2 sensors below reorder level.'),
+('PR-2606-07002', 4, 4, 2, 'approved', 300, 3.50, 1050.00, DATE_ADD(CURDATE(), INTERVAL 10 DAY), NOW(), 'Replenish IV tubing for ER and ICU usage.');
+
+-- Inventory Transactions
+INSERT INTO inventory_transactions (item_id, type, quantity, reference_type, user_id, notes) VALUES
+(1, 'in', 25, 'initial_stock', 1, 'Initial stock entry'),
+(2, 'in', 12, 'initial_stock', 1, 'Initial stock entry'),
+(2, 'out', 8, 'maintenance', 3, 'Used during ventilator service rotation'),
+(3, 'in', 8, 'initial_stock', 1, 'Initial stock entry'),
+(4, 'in', 500, 'initial_stock', 1, 'Initial stock entry'),
+(4, 'out', 350, 'ward_issue', 6, 'Issued to ER and ICU supply rooms'),
+(5, 'in', 50, 'initial_stock', 1, 'Initial stock entry');
 
 -- Knowledge Categories
 INSERT INTO knowledge_categories (name, slug, description, icon, color) VALUES
@@ -181,10 +212,11 @@ INSERT INTO knowledge_categories (name, slug, description, icon, color) VALUES
 ('System FAQs', 'system-faqs', 'General operational questions, scheduling, and hospital-wide standard procedures.', 'bi-question-circle', '#7c3aed');
 
 -- Knowledge Articles
-INSERT INTO knowledge_articles (category_id, title, slug, content, excerpt, author_id, status, is_featured, views, tags) VALUES
-(1, 'MRI Suite Cooling System Emergency Protocol', 'mri-cooling-emergency-protocol', '<h2>Emergency Cooling Protocol</h2><p>When the MRI cooling system triggers an alert, follow these steps immediately...</p>', 'Emergency procedure for MRI cooling system failures.', 1, 'published', 1, 342, 'CRITICAL,RADIOLOGY'),
-(2, 'New Multi-Factor Authentication Requirements', 'mfa-requirements-hems', '<h2>MFA Setup Guide</h2><p>All HEMS users must enable multi-factor authentication by end of quarter...</p>', 'Guide to setting up MFA for HEMS access.', 2, 'published', 0, 189, 'SECURITY,MANDATORY'),
-(3, 'Standard Operating Procedure: Patient Record Transfer', 'sop-patient-record-transfer', '<h2>Patient Record Transfer SOP</h2><p>Follow this procedure when transferring patient records between departments...</p>', 'SOP for inter-department patient record transfers.', 2, 'published', 0, 95, 'WORKFLOW');
+INSERT INTO knowledge_articles (category_id, title, slug, content, excerpt, author_id, status, article_type, is_faq, is_featured, views, tags) VALUES
+(1, 'MRI Suite Cooling System Emergency Protocol', 'mri-cooling-emergency-protocol', '<h2>Emergency Cooling Protocol</h2><p>When the MRI cooling system triggers an alert, follow these steps immediately...</p>', 'Emergency procedure for MRI cooling system failures.', 1, 'published', 'procedure', 0, 1, 342, 'CRITICAL,RADIOLOGY'),
+(2, 'New Multi-Factor Authentication Requirements', 'mfa-requirements-hems', '<h2>MFA Setup Guide</h2><p>All HEMS users must enable multi-factor authentication by end of quarter...</p>', 'Guide to setting up MFA for HEMS access.', 2, 'published', 'policy', 1, 0, 189, 'SECURITY,MANDATORY,FAQ'),
+(3, 'Standard Operating Procedure: Patient Record Transfer', 'sop-patient-record-transfer', '<h2>Patient Record Transfer SOP</h2><p>Follow this procedure when transferring patient records between departments...</p>', 'SOP for inter-department patient record transfers.', 2, 'published', 'procedure', 0, 0, 95, 'WORKFLOW'),
+(1, 'How do I attach a service report to a maintenance record?', 'faq-attach-service-report-maintenance', '<h2>Attaching service reports</h2><p>Open the maintenance work order, complete the service log, and attach supporting documents to the related knowledge article or ticket record.</p>', 'Use the work order completion notes and article attachments for service report documentation.', 3, 'published', 'faq', 1, 0, 64, 'FAQ,MAINTENANCE,ATTACHMENTS');
 
 -- Service Catalog
 INSERT INTO service_catalog_items (type, name, short_description, description, icon, color, category, default_priority, approval_mode, fulfillment_category_id, sla_hours, form_schema, sort_order) VALUES
@@ -196,10 +228,24 @@ INSERT INTO service_catalog_items (type, name, short_description, description, i
 ('equipment_request', 'Equipment Request', 'Request clinical equipment, loaner devices, accessories, or spare hardware.', 'Request hospital equipment with quantity, urgency, and delivery details.', 'bi-hdd-stack', '#dc2626', 'Equipment', 'medium', 'department_head', 4, 72, '[{"key":"equipment_type","label":"Equipment Type","type":"text","required":true},{"key":"quantity","label":"Quantity","type":"number","required":true},{"key":"request_reason","label":"Reason","type":"select","required":true,"options":[{"value":"new_service","label":"New service or station"},{"value":"replacement","label":"Replacement"},{"value":"temporary_loan","label":"Temporary loan"},{"value":"surge_capacity","label":"Surge capacity"}]},{"key":"delivery_location","label":"Delivery Location","type":"text","required":true},{"key":"needed_by","label":"Needed By","type":"date","required":false}]', 60);
 
 -- Maintenance Tasks
-INSERT INTO maintenance_tasks (title, description, asset_id, type, priority, status, assigned_to, scheduled_date, due_date) VALUES
-('ICU Ventilator Series 500 - Annual PM', 'Annual Preventive Maintenance & Sensor Calibration', 2, 'preventive', 'high', 'scheduled', 3, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 7 DAY)),
-('Philips Patient Monitor G40 - Firmware Update', 'Firmware Update & Battery Load Testing', 3, 'preventive', 'medium', 'in_progress', 5, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 3 DAY)),
-('GE Healthcare Ultrasound - Routine Inspection', 'Routine Visual Inspection & Cleaning', 6, 'inspection', 'low', 'scheduled', NULL, DATE_ADD(CURDATE(), INTERVAL 2 DAY), DATE_ADD(CURDATE(), INTERVAL 5 DAY));
+INSERT INTO maintenance_tasks (work_order_number, title, description, asset_id, type, priority, status, assigned_to, requested_by, completed_by, department_id, scheduled_date, due_date, completed_date, estimated_hours, actual_hours, cost, downtime_minutes, failure_code, checklist_json, notes) VALUES
+('WO-2606-09401', 'ICU Ventilator Series 500 - Annual PM', 'Annual preventive maintenance and sensor calibration.', 2, 'preventive', 'high', 'scheduled', 3, 1, NULL, 4, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 7 DAY), NULL, 3.0, NULL, NULL, 0, NULL, '[{"label":"Inspect inlet filters","done":false},{"label":"Calibrate pressure sensor","done":false},{"label":"Verify alarm response","done":false}]', 'Coordinate with ICU charge nurse before removing from service.'),
+('WO-2606-09402', 'Philips Patient Monitor G40 - Firmware Update', 'Firmware update and battery load testing.', 3, 'preventive', 'medium', 'in_progress', 5, 1, NULL, 4, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 3 DAY), NULL, 2.0, NULL, NULL, 0, NULL, '[{"label":"Backup current configuration","done":false},{"label":"Apply firmware bundle","done":false},{"label":"Run battery load test","done":false}]', 'Device is already staged in biomedical workshop.'),
+('WO-2606-09403', 'GE Healthcare Ultrasound - Routine Inspection', 'Routine visual inspection and cleaning.', 6, 'inspection', 'low', 'scheduled', NULL, 1, NULL, 2, DATE_ADD(CURDATE(), INTERVAL 2 DAY), DATE_ADD(CURDATE(), INTERVAL 5 DAY), NULL, 1.5, NULL, NULL, 0, NULL, '[{"label":"Inspect probes","done":false},{"label":"Clean fan vents","done":false},{"label":"Review image quality presets","done":false}]', ''),
+('WO-2605-09388', 'CT Scanner Detector Calibration', 'Completed detector calibration and phantom image quality review.', 5, 'preventive', 'medium', 'completed', 3, 1, 3, 1, DATE_SUB(CURDATE(), INTERVAL 12 DAY), DATE_SUB(CURDATE(), INTERVAL 10 DAY), DATE_SUB(CURDATE(), INTERVAL 10 DAY), 4.0, 3.5, 185.00, 45, 'CAL-DETECTOR', '[{"label":"Warm up scanner","done":true},{"label":"Run phantom scan","done":true},{"label":"Archive calibration report","done":true}]', 'Calibration completed successfully. Detector uniformity within tolerance.');
+
+-- Preventive Maintenance Schedules
+INSERT INTO maintenance_schedules (asset_id, department_id, title, description, frequency, priority, estimated_hours, lead_time_days, last_performed, next_due, assigned_to, last_generated_task_id, checklist_json, is_active) VALUES
+(2, 4, 'Ventilator Quarterly PM', 'Recurring quarterly ventilator preventive maintenance.', 'quarterly', 'high', 3.0, 7, NULL, DATE_ADD(CURDATE(), INTERVAL 7 DAY), 3, 1, '[{"label":"Inspect inlet filters","done":false},{"label":"Calibrate pressure sensor","done":false},{"label":"Verify alarm response","done":false}]', 1),
+(3, 4, 'Patient Monitor Firmware and Battery PM', 'Recurring patient monitor firmware review and battery load test.', 'semi_annual', 'medium', 2.0, 14, NULL, DATE_ADD(CURDATE(), INTERVAL 3 DAY), 5, 2, '[{"label":"Backup configuration","done":false},{"label":"Apply firmware bundle","done":false},{"label":"Run battery load test","done":false}]', 1),
+(5, 1, 'CT Scanner Detector Calibration', 'Recurring CT detector calibration schedule.', 'quarterly', 'medium', 4.0, 14, DATE_SUB(CURDATE(), INTERVAL 10 DAY), DATE_ADD(CURDATE(), INTERVAL 80 DAY), 3, 4, '[{"label":"Warm up scanner","done":false},{"label":"Run phantom scan","done":false},{"label":"Archive calibration report","done":false}]', 1);
+
+-- Maintenance Logs
+INSERT INTO maintenance_logs (task_id, user_id, action, status_from, status_to, notes, parts_used, labor_hours, cost) VALUES
+(1, 1, 'scheduled', NULL, 'scheduled', 'Work order scheduled from recurring PM plan.', NULL, NULL, NULL),
+(2, 5, 'started', 'scheduled', 'in_progress', 'Firmware package downloaded and device staged.', NULL, 0.5, NULL),
+(3, 1, 'scheduled', NULL, 'scheduled', 'Inspection queued for cardiology ultrasound system.', NULL, NULL, NULL),
+(4, 3, 'completed', 'in_progress', 'completed', 'Detector calibration completed. Phantom scan passed.', 'Calibration phantom, detector cleaning swabs', 3.5, 185.00);
 
 -- Notifications
 INSERT INTO notifications (user_id, type, title, message, link) VALUES

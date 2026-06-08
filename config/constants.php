@@ -80,6 +80,8 @@ define('NOTIFY_SLA_BREACHED', 'sla_breached');
 define('NOTIFY_APPROVAL_REQUIRED', 'approval_required');
 define('NOTIFY_MAINTENANCE_DUE', 'maintenance_due');
 define('NOTIFY_LOW_STOCK', 'low_stock');
+define('NOTIFY_REPORT_READY', 'report_ready');
+define('NOTIFY_REPORT_FAILED', 'report_failed');
 define('NOTIFY_SYSTEM', 'system');
 
 // Audit Actions
@@ -116,4 +118,23 @@ define('STATUS_COLORS', [
     'waiting_vendor' => 'secondary',
     'resolved'       => 'success',
     'closed'         => 'dark',
+    'scheduled'      => 'primary',
+    'completed'      => 'success',
+    'overdue'        => 'danger',
+    'cancelled'      => 'dark',
+    'active'         => 'success',
+    'inactive'       => 'secondary',
+    'maintenance'    => 'warning',
+    'draft'          => 'secondary',
+    'submitted'      => 'primary',
+    'approved'       => 'success',
+    'ordered'        => 'info',
+    'received'       => 'success',
+    'rejected'       => 'danger',
+    'on_track'       => 'success',
+    'warning'        => 'warning',
+    'breached'       => 'danger',
+    'info'           => 'info',
+    'success'        => 'success',
+    'danger'         => 'danger',
 ]);

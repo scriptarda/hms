@@ -54,6 +54,12 @@ return [
     // Notification polling interval (ms)
     'notification_poll_interval' => 30000,
 
+    // Socket.IO realtime bridge
+    'realtime' => [
+        'enabled' => true,
+        'socket_url' => 'http://localhost:3001',
+    ],
+
     // Paths
     'paths' => [
         'storage' => __DIR__ . '/../storage',
